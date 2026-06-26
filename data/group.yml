@@ -1,8 +1,0 @@
----
-apiVersion: infrahub.app/v1
-kind: Object
-spec:
-  kind: CoreStandardGroup
-  data:
-    - name: reachability-rules
-      description: "Members are TopologyReachabilityRule nodes evaluated by the reachability check on every proposed change."

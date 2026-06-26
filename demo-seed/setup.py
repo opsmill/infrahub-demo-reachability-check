@@ -55,7 +55,6 @@ DATA_FILES = [
     "demo-seed/data/01-asns.yml",
     "demo-seed/data/02-devices.yml",
     "demo-seed/data/03-bgp-sessions.yml",
-    "data/group.yml",
 ]
 
 GROUP_NAME = "reachability-rules"
@@ -101,6 +100,30 @@ def _load_schemas_and_data() -> None:
         _run(["infrahubctl", "menu", "load", menu])
     for data in DATA_FILES:
         _run(["infrahubctl", "object", "load", data])
+    asyncio.run(_ensure_group())
+
+
+async def _ensure_group() -> None:
+    """Create the reachability-rules CoreStandardGroup if it does not exist.
+
+    The CoreCheckDefinition installed by the CoreRepository sync
+    references this group as its ``targets:``. The group must therefore
+    exist before ``demo.register-repo`` runs, otherwise the sync's
+    CoreCheckDefinitionCreate mutation fails with NODE_NOT_FOUND.
+    """
+    client = InfrahubClient(
+        config=Config(
+            address=os.environ["INFRAHUB_ADDRESS"],
+            api_token=os.environ["INFRAHUB_API_TOKEN"],
+        )
+    )
+    existing = await client.filters(kind="CoreStandardGroup", name__value=GROUP_NAME)
+    if existing:
+        print(f"CoreStandardGroup {GROUP_NAME!r} already exists; skipping create.")
+        return
+    group = await client.create(kind="CoreStandardGroup", name=GROUP_NAME)
+    await group.save()
+    print(f"created CoreStandardGroup {GROUP_NAME!r}")
 
 
 async def _resolve(client: InfrahubClient, ref: dict) -> str:
