@@ -84,8 +84,27 @@ change. The rest of the machinery is shared.
 
 ### Why it is hard today
 
-Without something like this pattern, those invariants live in people,
-not in the system:
+In the standard network-automation playbook, checking an invariant
+like *"Atlanta-to-NYC must transit AS64496 and never AS8220"* means
+writing a Python script that re-derives the topology from flat tables
+on every run: fetch every device, every interface, every BGP session,
+every prefix; rebuild the adjacency in memory; iterate over every
+source / destination / path permutation; apply the rule to each. You
+are reconstructing the graph in code, by hand, with no help from the
+system that already holds it — and the moment the schema grows or a
+new device kind appears, the script silently stops covering cases.
+
+A graph source of truth changes the cost equation. The relationships
+between devices, sessions, zones, and tenants are already first-class
+edges in the database. *"Which paths exist between A and B subject to
+these constraints?"* becomes a traversal query, not a nested loop;
+the engine walks the graph, the rule declares the predicate, and
+nothing has to enumerate permutations in user code. A script cannot
+ask that question without re-deriving the graph; the graph can answer
+it natively.
+
+Without that — even when the data is sound — the invariants live in
+people, not in the system:
 
 - **Slack threads and tribal knowledge.** A senior engineer eyeballs
   the diff and remembers the rule. The newer engineer does not even
@@ -93,14 +112,15 @@ not in the system:
 - **Post-deploy fire-fighting.** The change merges, monitoring catches
   the broken path twenty minutes later, somebody rolls back.
 - **One-off scripts.** A Python script in someone's home directory,
-  run against a snapshot of the source of truth that drifted from
-  production three releases ago.
+  run against a snapshot that drifted from production three releases
+  ago — re-deriving the same graph the source of truth already holds.
 - **Diagrams in Confluence.** Out of date the day after they are
   drawn, disconnected from the data that drives the deployment.
 
-The common failure mode is the same: the invariants are not authored
-where the change is reviewed. By the time anyone notices, the change
-is in.
+The common failure mode is the same: the invariant is not authored
+where the change is reviewed, and the verification logic is
+re-implemented from flat data every time. By the time anyone
+notices, the change is in.
 
 ### What Infrahub delivers
 
