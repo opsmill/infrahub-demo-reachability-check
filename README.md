@@ -171,7 +171,7 @@ sequenceDiagram
     participant PC as Proposed Change<br/>pipeline
     participant Fan as targets: fan-out<br/>(per CoreCheckDefinition)
     participant Check as PathAssertionCheck<br/>(this example)
-    participant GQL as InfrahubPathTraversal<br/>(stored query path_check.gql)
+    participant GQL as InfrahubPathTraversal<br/>(client.traverse_paths, SDK 1.22)
     participant Verdict as CoreUserValidator<br/>+ CoreStandardCheck
     participant UI as Verdict UI card
 
@@ -182,8 +182,8 @@ sequenceDiagram
         Fan->>Fan: member.extract({rule_id})
         Fan->>Check: run_user_check(rule_id)
         Check->>Check: client.get(TopologyReachabilityRule, rule_id,<br/>include=["constraints"])
-        Check->>GQL: collect_data → path_check<br/>(source/destination/depth from rule)
-        GQL-->>Check: paths[], source, destination
+        Check->>GQL: client.traverse_paths(source, destination,<br/>max_depth, max_paths, excluded_kinds)
+        GQL-->>Check: PathTraversalResult: paths[], source, destination
         Check->>Check: evaluate every path against<br/>required / forbidden / any_of
         Check->>Verdict: log_entries (incl. rule.path_traversal_url),<br/>conclusion, severity
     end
@@ -290,12 +290,24 @@ and update the value. The check reads it directly from the rule
 (`rule.path_traversal_url.value`) when building the verdict log line.
 There is no URL construction inside the check itself.
 
+The transform returns a **relative URL** of the form
+`/path-traversal?source=...&destination=...`. The Infrahub UI
+resolves it against the current page, so the same value works on a
+local `http://localhost:8000` stack, on a production
+`https://infrahub.your-company.com` deployment, and on any other
+host without any environment-variable configuration. The value is
+also noticeably shorter than the equivalent absolute URL, which
+matters because it renders on the rule detail page and in every
+verdict log message.
+
 Why this matters:
 
 - **One source of truth** for the URL. The UI sees the same string the
   check emits.
 - **Branch-aware**: on a branch with a tightened `max_depth`, the URL
   reflects the branch value automatically.
+- **Host-agnostic**: relative URL, no env-var to keep in sync with
+  the actual deployment URL.
 - **Easier to extend**: add a new query parameter (for example, a
   constraint fingerprint) by editing the transform alone. No check
   change is required.
@@ -383,13 +395,13 @@ rule, and emits the `Inspect in UI:` link from the rule's
 
 ### Tune the excluded kinds for your schema
 
-`queries/path_check.gql` hard-codes
-`excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint", "InfraPlatform"]`.
+The repository ships with a minimal default:
+`excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint"]`.
 This list controls **which node kinds the traversal will refuse to walk
 through as hops**. Getting it right matters more than it looks at
 first glance.
 
-Why the defaults are what they are:
+Why these two are excluded by default:
 
 - `TopologyReachabilityRule`. Every rule has cardinality-one
   relationships to its `source` and `destination`. Without this
@@ -398,47 +410,47 @@ Why the defaults are what they are:
   collapses to a trivial "the rule connects them" path.
 - `TopologyReachabilityConstraint`. Children of the rule. Excluded
   for the same reason.
-- `InfraPlatform`. In the standard `models/base` schemas, every
-  device on the same vendor stack shares a platform node, so the
-  traversal would prefer a two-hop `device → InfraPlatform → device`
-  shortcut over the real network path. Drop this if you do not have
-  `InfraPlatform` in your schema (Infrahub 1.10 rejects unknown
-  `excluded_kinds` values with
-  `excluded_kinds kind '<X>' not in schema`).
 
-You will almost certainly need to **tune this list for your topology**.
-Two common situations:
+**You will almost certainly need to extend this list for your
+topology.** The Infrahub GraphQL server rejects `excluded_kinds`
+values that are not in the loaded schema, so the defaults stay
+minimal; you add the shortcut kinds your schema actually has.
 
-- **A kind in the default list does not exist in your schema.** Remove
-  it, or the GraphQL call will fail outright. The `live-demo` branch
-  ships a minimal schema and drops `InfraPlatform` for exactly this
-  reason.
-- **Your topology has its own "shortcut" kinds.** Anything that
-  cardinality-many-relates a large fraction of nodes (e.g. a shared
-  `Organization`, `Tag`, `Site`, `Tenant`, or a global `Vendor` node)
-  will cause the traversal to prefer a short artificial path through
-  it instead of the real network hops you want to assert on. Add those
-  kinds to `excluded_kinds`.
+The single most common extension for the standard `models/base`
+schemas is `InfraPlatform`. Every device on the same vendor stack
+shares a platform node, so without excluding it the traversal would
+prefer a two-hop `device → InfraPlatform → device` shortcut over
+the real network path. Other typical "shortcut" kinds you may want
+to exclude in your fork: a shared `Organization`, `Tag`, `Site`,
+`Tenant`, or a global `Vendor` node. Anything that
+cardinality-many-relates a large slice of the graph belongs on the
+list.
 
-When in doubt, open a path between two endpoints directly in
-`/path-traversal`, look at what shows up in the depth-1 and depth-2
-results, and exclude any kind that does not represent a real hop in
-your domain.
+When in doubt, open `/path-traversal` between two endpoints
+directly, look at what shows up in the depth-1 and depth-2 results,
+and exclude any kind that does not represent a real hop in your
+domain.
 
-If you change the namespace or rename the kinds, update **three**
-places in lock-step:
+Three places stay in lock-step. Update all three together when you
+extend the list (or when you rename the rule or constraint kinds in
+your fork):
 
-1. `excluded_kinds` array in `queries/path_check.gql` (what the check evaluates)
-2. `EXCLUDED_KINDS` tuple in `transforms/path_traversal_url.py` (what the verdict URL points at)
-3. `kind:` strings in `schemas/reachability.yml`, `data/*.yml`, and the
-   `class PathAssertionCheck` references
+1. `excluded_kinds` array in `queries/path_check.gql` (the stored
+   query, kept for the `CoreCheckDefinition` `query` attribute even
+   though the check itself uses `traverse_paths`).
+2. `EXCLUDED_KINDS` tuple in `transforms/path_traversal_url.py`
+   (what the verdict URL points at).
+3. `EXCLUDED_KINDS` tuple in `checks/path_assertion.py` (what the
+   check actually passes to `client.traverse_paths()`).
 
 ## Honest limitations
 
-- **Stored `.gql` is mandatory** on the `main` branch pattern. Infrahub's
-  repo sync resolves the check's `query` attribute against a registered
-  `CoreGraphQLQuery`. (The `live-demo` branch of this repo shows an
-  alternative using the SDK 1.22 `traverse_paths()` API directly.)
+- **SDK 1.22 or later is required.** The check uses
+  `InfrahubClient.traverse_paths()`, added in SDK 1.22, instead of
+  executing the stored `path_check.gql` query directly. The stored
+  query stays registered (the `CoreCheckDefinition` requires a
+  `query`) but is never executed; the SDK helper builds its own
+  GraphQL call.
 - **No "what-if" preview outside a proposed change.** The check fires
   inside the proposed-change pipeline. To explore a path on a branch
   interactively, query `InfrahubPathTraversal` directly from the GraphQL

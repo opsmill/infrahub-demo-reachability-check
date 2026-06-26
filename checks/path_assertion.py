@@ -1,12 +1,24 @@
-"""Reachability path-assertion check.
+"""Reachability path-assertion check (SDK 1.22 edition).
 
-Each member of the targeted group is a TopologyReachabilityRule node. The
-runner fans the check out per group member and resolves only the rule id
-from each member into ``self.params``. The check then fetches the rule
-(with its constraint children) and reads everything else it needs.
-source, destination, max_depth, max_paths, enabled, directly from the rule
-node. This keeps the .infrahub.yml parameter mapping minimal and makes the
-check the single source of truth for what each rule means.
+Same semantics as the ``main`` branch version, but uses
+``InfrahubClient.traverse_paths()`` (added in SDK 1.22, requires Infrahub
+1.10 or later) instead of a stored ``CoreGraphQLQuery``. The stored
+``path_check`` query still exists as a minimal placeholder because
+``InfrahubCheck`` requires ``query`` to be set, but it is never
+executed. The SDK helper builds its own GraphQL call and returns a
+typed ``PathTraversalResult``.
+
+The click-through URL is not built here. It is computed server-side by
+the ``path_traversal_url`` Python transform (registered in
+``.infrahub.yml``) and stored on the rule as a read-only attribute.
+The check just reads ``rule.path_traversal_url.value`` when assembling
+the verdict log line.
+
+Each member of the targeted group is a ``TopologyReachabilityRule``.
+The runner extracts only the rule id from each member, and the check
+fetches the rule together with its constraint children. Source,
+destination, max_depth, max_paths, and enabled are then read directly
+off the rule node.
 """
 
 from __future__ import annotations
@@ -16,15 +28,36 @@ from collections import defaultdict
 from typing import Any
 
 from infrahub_sdk.checks import InfrahubCheck
+from infrahub_sdk.graph_traversal import Path, PathTraversalResult
 
 FALSEY_STRINGS = frozenset({"false", "no", "0", "off"})
 
+# Kinds excluded from the traversal. Without this, the rule node itself
+# (cardinality-one source and destination) becomes a one-hop shortcut
+# between the endpoints and every reachability assertion collapses to a
+# trivial "the rule connects them" path.
+#
+# Adopters whose schema has additional shortcut kinds (for example
+# ``InfraPlatform`` in the standard ``models/base`` schemas, or a
+# global ``Tag`` / ``Tenant`` / ``Vendor`` node that cardinality-many-
+# relates to a large slice of the graph) should add those kinds to
+# this tuple AND to the matching list in ``queries/path_check.gql``
+# AND to the ``EXCLUDED_KINDS`` tuple in
+# ``transforms/path_traversal_url.py``. The GraphQL server rejects
+# ``excluded_kinds`` values that are not in the loaded schema, so the
+# default list stays minimal; extend it in your fork.
+EXCLUDED_KINDS: tuple[str, ...] = (
+    "TopologyReachabilityRule",
+    "TopologyReachabilityConstraint",
+)
+
 
 def _is_disabled(value: Any) -> bool:
-    """Treat anything falsy-looking as disabled. The ``enabled`` field is a
-    Boolean attribute on the rule, but the check can also be invoked via
-    ``infrahubctl check key=value`` where it arrives as a string. Both forms
-    are handled.
+    """Return True when ``enabled`` should be treated as disabled.
+
+    The ``enabled`` field is a Boolean attribute on the rule, but the
+    check can also be invoked through ``infrahubctl check key=value``
+    where it arrives as a string. Both forms are handled.
     """
     if value is False:
         return True
@@ -37,21 +70,41 @@ def _normalize(value: Any) -> str:
     """Stringify for hop-attribute comparison.
 
     Booleans render lower-case so a Text ``attribute_value`` of
-    ``"true"`` / ``"false"`` matches a Python bool. Everything else uses
-    plain ``str()``.
+    ``"true"`` or ``"false"`` matches a Python bool. Everything else
+    uses plain ``str()``.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
 
 
+def _coerce_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class PathAssertionCheck(InfrahubCheck):
+    # ``query`` is required by ``InfrahubCheck.__init__`` and the
+    # ``CoreCheckDefinition`` repo-sync flow. A stored ``path_check``
+    # query is registered in ``.infrahub.yml`` so the check passes
+    # validation, but ``collect_data`` does not execute it.
+    # ``traverse_paths()`` is called directly instead.
     query = "path_check"
     timeout = 120
 
-    # The check fetches the rule once in collect_data and stashes it here
-    # so validate() can use it without a second round trip.
+    # The check fetches the rule once in collect_data and stashes both
+    # the rule and the traversal result so validate() does not have to
+    # round-trip again.
     _rule: Any | None = None
+    _traversal_result: PathTraversalResult | None = None
 
     async def collect_data(self) -> dict:
         rule_id = self.params.get("rule_id")
@@ -75,17 +128,18 @@ class PathAssertionCheck(InfrahubCheck):
         if source_id and source_id == destination_id:
             return {"_self_loop": True}
 
-        variables = {
-            "source_id": source_id,
-            "destination_id": destination_id,
-            "max_depth": rule.max_depth.value,
-            "max_paths": rule.max_paths.value,
-        }
-        return await self.client.query_gql_query(
-            name=self.query,
-            branch_name=self.branch_name,
-            variables=variables,
+        if not source_id or not destination_id:
+            return {"_missing_endpoints": True}
+
+        self._traversal_result = await self.client.traverse_paths(
+            source=source_id,
+            destination=destination_id,
+            max_depth=_coerce_int(rule.max_depth.value),
+            max_paths=_coerce_int(rule.max_paths.value),
+            excluded_kinds=list(EXCLUDED_KINDS),
+            branch=self.branch_name,
         )
+        return {"_ok": True}
 
     @staticmethod
     def _rule_url(rule: Any) -> str | None:
@@ -118,6 +172,12 @@ class PathAssertionCheck(InfrahubCheck):
             )
             return
 
+        if data.get("_missing_endpoints"):
+            self.log_error(
+                message="Rule is missing source or destination; cannot evaluate.",
+            )
+            return
+
         rule = self._rule
         if rule is None:
             self.log_error(message="Rule was not loaded; cannot evaluate constraints.")
@@ -125,10 +185,16 @@ class PathAssertionCheck(InfrahubCheck):
 
         constraints = [related.peer for related in rule.constraints.peers]
 
-        result = data.get("InfrahubPathTraversal") or {}
-        paths = result.get("paths") or []
-        source_label = (result.get("source") or {}).get("display_label") or getattr(rule.source, "display_label", None)
-        dest_label = (result.get("destination") or {}).get("display_label") or getattr(rule.destination, "display_label", None)
+        result = self._traversal_result
+        paths: list[Path] = list(result.paths) if result else []
+        source_label = (
+            result.source.display_label if result and result.source else getattr(rule.source, "display_label", None)
+        )
+        dest_label = (
+            result.destination.display_label
+            if result and result.destination
+            else getattr(rule.destination, "display_label", None)
+        )
         max_depth = rule.max_depth.value
         url = self._rule_url(rule)
         url_block = f"\n\nInspect in UI:\n{url}" if url else ""
@@ -141,7 +207,9 @@ class PathAssertionCheck(InfrahubCheck):
 
         if not constraints:
             self.log_info(
-                message=f"No constraints defined; reachability satisfied across {len(paths)} path(s).{url_block}",
+                message=(
+                    f"No constraints defined; reachability satisfied across {len(paths)} path(s).{url_block}"
+                ),
             )
             return
 
@@ -154,17 +222,17 @@ class PathAssertionCheck(InfrahubCheck):
         forbidden = [c for c in constraints if c.polarity.value == "forbidden"]
         any_of = [c for c in constraints if c.polarity.value == "any_of"]
 
-        # ``forbidden`` is a global invariant: a single offending hop on any
-        # returned path fails the check, even if other paths satisfy
-        # required. ``required`` and ``any_of`` keep existence semantics: at
-        # least one path must include all required hops and at least one
-        # any_of option.
+        # ``forbidden`` is a global invariant. A single offending hop on
+        # any returned path fails the check, even if other paths satisfy
+        # ``required``. ``required`` and ``any_of`` keep existence
+        # semantics: at least one path must include all required hops and
+        # at least one any_of option.
         forbidden_hits: list[str] = []
         requirement_violations: list[str] = []
         valid_count = 0
         for path in paths:
-            hops = [hop["node"] for hop in path["hops"]]
-            trail = " → ".join(hop["display_label"] for hop in hops)
+            hops = [hop.node for hop in path.hops]
+            trail = " → ".join(hop.display_label for hop in hops)
             for c in forbidden:
                 if any(self._hop_matches(hop, c, attr_values) for hop in hops):
                     forbidden_hits.append(f"[{trail}]: forbidden {self._describe(c)} present")
@@ -173,7 +241,9 @@ class PathAssertionCheck(InfrahubCheck):
             for c in required:
                 if not any(self._hop_matches(hop, c, attr_values) for hop in hops):
                     problems.append(f"missing required {self._describe(c)}")
-            if any_of and not any(self._hop_matches(hop, c, attr_values) for hop in hops for c in any_of):
+            if any_of and not any(
+                self._hop_matches(hop, c, attr_values) for hop in hops for c in any_of
+            ):
                 options = " | ".join(self._describe(c) for c in any_of)
                 problems.append(f"none of any_of constraints matched: {options}")
 
@@ -218,13 +288,13 @@ class PathAssertionCheck(InfrahubCheck):
                 ok = False
         return ok
 
-    def _hop_matches(self, hop_node: dict, constraint: Any, attr_values: dict) -> bool:
-        if hop_node["kind"] != constraint.hop_kind.value:
+    def _hop_matches(self, hop_node: Any, constraint: Any, attr_values: dict) -> bool:
+        if hop_node.kind != constraint.hop_kind.value:
             return False
         attribute_name = constraint.attribute_name.value
         if attribute_name is None:
             return True
-        actual = attr_values.get((constraint.hop_kind.value, attribute_name, hop_node["id"]))
+        actual = attr_values.get((constraint.hop_kind.value, attribute_name, hop_node.id))
         if actual is None:
             return False
         return _normalize(actual) == _normalize(constraint.attribute_value.value)
@@ -240,7 +310,7 @@ class PathAssertionCheck(InfrahubCheck):
 
     async def _fetch_attributes(
         self,
-        paths: list[dict],
+        paths: list[Path],
         constraints: list[Any],
     ) -> dict[tuple[str, str, str], Any]:
         needed: dict[str, set[str]] = defaultdict(set)
@@ -253,7 +323,7 @@ class PathAssertionCheck(InfrahubCheck):
 
         async def fetch_kind(kind: str, attribute_names: set[str]) -> dict[tuple[str, str, str], Any]:
             hop_ids = {
-                hop["node"]["id"] for path in paths for hop in path["hops"] if hop["node"]["kind"] == kind
+                hop.node.id for path in paths for hop in path.hops if hop.node.kind == kind
             }
             if not hop_ids:
                 return {}
