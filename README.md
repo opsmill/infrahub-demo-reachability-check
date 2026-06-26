@@ -185,10 +185,10 @@ sequenceDiagram
         Check->>GQL: client.traverse_paths(source, destination,<br/>max_depth, max_paths, excluded_kinds)
         GQL-->>Check: PathTraversalResult: paths[], source, destination
         Check->>Check: evaluate every path against<br/>required / forbidden / any_of
-        Check->>Verdict: log_entries (incl. rule.path_traversal_url),<br/>conclusion, severity
+        Check->>Verdict: log_entries (per-path verdict),<br/>conclusion, severity
     end
     Verdict-->>UI: validator aggregates per-rule cards
-    UI-->>User: PASS / FAIL card per rule<br/>(URL is clickable in the message body)
+    UI-->>User: PASS / FAIL card per rule<br/>(click into the rule for the path_traversal_url link)
 ```
 
 ### Data model and runtime view
@@ -286,24 +286,25 @@ as a `python_transform` and wired into the schema with:
 
 Whenever any of the rule's inputs change (source, destination,
 max_depth, max_paths), Infrahub's task workers re-run the transform
-and update the value. The check reads it directly from the rule
-(`rule.path_traversal_url.value`) when building the verdict log line.
-There is no URL construction inside the check itself.
+and update the value. The Infrahub UI renders the attribute as a
+clickable hyperlink on the rule detail page; the check itself does
+not embed the URL in its verdict log.
 
 The transform returns a **relative URL** of the form
 `/path-traversal?source=...&destination=...`. The Infrahub UI
 resolves it against the current page, so the same value works on a
 local `http://localhost:8000` stack, on a production
 `https://infrahub.your-company.com` deployment, and on any other
-host without any environment-variable configuration. The value is
-also noticeably shorter than the equivalent absolute URL, which
-matters because it renders on the rule detail page and in every
-verdict log message.
+host without any environment-variable configuration. Keeping it
+relative is also the reason it lives only on the rule detail page:
+a relative URL pasted into a verdict log message would lose its
+host context outside the UI, so the verdict log stays focused on
+what failed and the navigation lives where it belongs.
 
 Why this matters:
 
-- **One source of truth** for the URL. The UI sees the same string the
-  check emits.
+- **Host-agnostic**: relative URL, no env-var to keep in sync with
+  the actual deployment URL.
 - **Branch-aware**: on a branch with a tightened `max_depth`, the URL
   reflects the branch value automatically.
 - **Host-agnostic**: relative URL, no env-var to keep in sync with
@@ -318,9 +319,9 @@ A `TransformPython` computed attribute only fires after Infrahub has
 processed this repository's `.infrahub.yml`. That processing happens
 exclusively through a registered `CoreRepository`. If you have not yet
 registered this repository, the `path_traversal_url` attribute exists
-on the schema but stays `null` on every rule, and the check's verdict
-message has no `Inspect in UI:` line. You can confirm this in the
-GraphQL playground:
+on the schema but stays `null` on every rule, and the rule detail
+page has no clickable link to `/path-traversal`. You can confirm
+this in the GraphQL playground:
 
 ```graphql
 {
@@ -389,9 +390,9 @@ reachability check:
    SDK, or `infrahubctl object load`.
 
 Once the group exists and at least one rule is a member of it, every
-proposed change runs the check, produces a PASS or FAIL verdict per
-rule, and emits the `Inspect in UI:` link from the rule's
-`path_traversal_url` computed attribute.
+proposed change runs the check and produces a PASS or FAIL verdict
+per rule. Click into the rule on its detail page to follow the
+`path_traversal_url` link straight to `/path-traversal`.
 
 ### Tune the excluded kinds for your schema
 

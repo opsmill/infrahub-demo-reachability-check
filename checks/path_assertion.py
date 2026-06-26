@@ -1,18 +1,20 @@
 """Reachability path-assertion check (SDK 1.22 edition).
 
-Same semantics as the ``main`` branch version, but uses
-``InfrahubClient.traverse_paths()`` (added in SDK 1.22, requires Infrahub
-1.10 or later) instead of a stored ``CoreGraphQLQuery``. The stored
-``path_check`` query still exists as a minimal placeholder because
-``InfrahubCheck`` requires ``query`` to be set, but it is never
-executed. The SDK helper builds its own GraphQL call and returns a
-typed ``PathTraversalResult``.
+Uses ``InfrahubClient.traverse_paths()`` (added in SDK 1.22, requires
+Infrahub 1.10 or later) to drive the path traversal. The stored
+``path_check`` query stays registered because ``InfrahubCheck``
+requires ``query`` to be set, but the check never executes it; the
+SDK helper builds its own GraphQL call and returns a typed
+``PathTraversalResult``.
 
-The click-through URL is not built here. It is computed server-side by
-the ``path_traversal_url`` Python transform (registered in
-``.infrahub.yml``) and stored on the rule as a read-only attribute.
-The check just reads ``rule.path_traversal_url.value`` when assembling
-the verdict log line.
+The check does not emit the click-through URL in its verdict log.
+The rule already exposes ``path_traversal_url`` as a read-only,
+URL-kind computed attribute (see ``transforms/path_traversal_url.py``),
+which the Infrahub UI renders as a clickable hyperlink on the rule
+detail page. Pasting a relative URL into a verdict log message would
+not survive copy-paste outside the UI, so the verdict stays focused
+on what failed and on which path; the navigation lives where it
+belongs, on the rule itself.
 
 Each member of the targeted group is a ``TopologyReachabilityRule``.
 The runner extracts only the rule id from each member, and the check
@@ -141,22 +143,6 @@ class PathAssertionCheck(InfrahubCheck):
         )
         return {"_ok": True}
 
-    @staticmethod
-    def _rule_url(rule: Any) -> str | None:
-        """Return the rule's computed ``path_traversal_url`` value, if any.
-
-        The URL is built server-side by the ``path_traversal_url`` Python
-        transform (see ``transforms/path_traversal_url.py``) and stored on
-        the rule as a read-only computed attribute. The check just reads it.
-        """
-        attribute = getattr(rule, "path_traversal_url", None)
-        if attribute is None:
-            return None
-        value = getattr(attribute, "value", None)
-        if not value:
-            return None
-        return str(value)
-
     async def validate(self, data: dict) -> None:
         if data.get("_no_rule_id"):
             self.log_error(message="Rule id was not extracted into params; cannot load rule.")
@@ -196,20 +182,16 @@ class PathAssertionCheck(InfrahubCheck):
             else getattr(rule.destination, "display_label", None)
         )
         max_depth = rule.max_depth.value
-        url = self._rule_url(rule)
-        url_block = f"\n\nInspect in UI:\n{url}" if url else ""
 
         if not paths:
             self.log_error(
-                message=f"No path within depth {max_depth} between '{source_label}' and '{dest_label}'.{url_block}",
+                message=f"No path within depth {max_depth} between '{source_label}' and '{dest_label}'.",
             )
             return
 
         if not constraints:
             self.log_info(
-                message=(
-                    f"No constraints defined; reachability satisfied across {len(paths)} path(s).{url_block}"
-                ),
+                message=f"No constraints defined; reachability satisfied across {len(paths)} path(s).",
             )
             return
 
@@ -259,14 +241,12 @@ class PathAssertionCheck(InfrahubCheck):
         if errors:
             for line in errors:
                 self.log_error(message=line)
-            if url:
-                self.log_error(message=f"Inspect in UI:\n{url}")
             return
 
         self.log_info(
             message=(
                 f"{valid_count}/{len(paths)} paths satisfy all constraints "
-                f"(cap: max_paths={rule.max_paths.value}).{url_block}"
+                f"(cap: max_paths={rule.max_paths.value})."
             ),
         )
 
