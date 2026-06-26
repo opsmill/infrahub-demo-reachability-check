@@ -1,0 +1,29 @@
+query RuleUrl($id: ID!) {
+  TopologyReachabilityRule(ids: [$id]) {
+    edges {
+      node {
+        max_depth { value }
+        max_paths { value }
+        source {
+          node {
+            id
+            display_label
+          }
+        }
+        destination {
+          node {
+            id
+            display_label
+          }
+        }
+        constraints {
+          edges {
+            node {
+              hop_kind { value }
+            }
+          }
+        }
+      }
+    }
+  }
+}

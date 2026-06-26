@@ -7,17 +7,21 @@ still exists as a minimal placeholder because ``InfrahubCheck`` requires
 ``query`` to be set — but we never actually execute it; the SDK helper builds
 its own GraphQL call and returns a typed ``PathTraversalResult``.
 
-Each member of the targeted group is a ``TopologyReachabilityRule``. The runner
-fans the check out per member and resolves the per-rule path expressions
-declared in ``.infrahub.yml`` into ``self.params``. This check then loads
-the rule with its constraint children and evaluates each returned path
-against the required / forbidden / any_of constraints.
+The click-through URL is **not** built here. It is computed server-side by
+the ``path_traversal_url`` Python transform (registered in ``.infrahub.yml``)
+and stored on the rule as a read-only attribute; the check just reads
+``rule.path_traversal_url.value`` when assembling the verdict log line.
+
+Each member of the targeted group is a ``TopologyReachabilityRule``. The
+runner fans the check out per member and resolves the per-rule path
+expressions declared in ``.infrahub.yml`` into ``self.params``. This check
+then loads the rule with its constraint children and evaluates each
+returned path against the required / forbidden / any_of constraints.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 from collections import defaultdict
 from typing import Any
 
@@ -26,13 +30,6 @@ from infrahub_sdk.graph_traversal import Path, PathTraversalResult
 
 FALSEY_STRINGS = frozenset({"false", "no", "0", "off"})
 
-# The worker's view of Infrahub (`INFRAHUB_ADDRESS` inside docker-compose) is
-# usually not browser-reachable, so we hard-code a sensible default for the
-# standard local dev stack and let operators override per-environment via
-# INFRAHUB_PUBLIC_URL (e.g. https://infrahub.your-company.com).
-PUBLIC_URL_ENV = "INFRAHUB_PUBLIC_URL"
-DEFAULT_PUBLIC_URL = "http://localhost:8000"
-
 # Kinds excluded from the traversal. Without this, the rule node itself
 # (cardinality-one source and destination) becomes a 1-hop shortcut between
 # the endpoints and every reachability assertion collapses to a trivial
@@ -40,7 +37,7 @@ DEFAULT_PUBLIC_URL = "http://localhost:8000"
 #
 # On the `main` branch this tuple also includes "InfraPlatform" because
 # every device on the same vendor stack would otherwise share a platform
-# node and the traversal would prefer that 2-hop shortcut. The demo
+# node and the traversal would prefer that 2-hop shortcut. The live-demo
 # branch ships a minimal schema (no InfraPlatform) so we drop it here —
 # the GraphQL server rejects excluded_kinds that aren't in the loaded
 # schema.
@@ -119,27 +116,21 @@ class PathAssertionCheck(InfrahubCheck):
         )
         return {"_ok": True}
 
-    def _path_traversal_url(self) -> str | None:
-        """Build an absolute path-traversal URL for the verdict log line.
+    @staticmethod
+    def _rule_url(rule: Any) -> str | None:
+        """Pull the rule's computed `path_traversal_url` value, if any.
 
-        The base URL comes from ``$INFRAHUB_PUBLIC_URL`` (set this in your
-        worker environment if Infrahub is not at the default), falling back
-        to ``http://localhost:8000`` for the standard local dev stack.
-        Returns None if either endpoint UUID is missing.
+        The URL is built server-side by the ``path_traversal_url`` Python
+        transform (see ``transforms/path_traversal_url.py``) and stored on
+        the rule as a read-only computed attribute. The check just reads it.
         """
-        source_id = self.params.get("source_id")
-        destination_id = self.params.get("destination_id")
-        if not source_id or not destination_id:
+        attribute = getattr(rule, "path_traversal_url", None)
+        if attribute is None:
             return None
-        base = (os.environ.get(PUBLIC_URL_ENV) or DEFAULT_PUBLIC_URL).rstrip("/")
-        query = f"source={source_id}&destination={destination_id}"
-        for param_key, url_key in (("max_depth", "depth"), ("max_paths", "maxPaths")):
-            value = self.params.get(param_key)
-            if value is not None:
-                query += f"&{url_key}={value}"
-        for kind in EXCLUDED_KINDS:
-            query += f"&excludedKinds={kind}"
-        return f"{base}/path-traversal?{query}"
+        value = getattr(attribute, "value", None)
+        if not value:
+            return None
+        return str(value)
 
     async def validate(self, data: dict) -> None:
         if _is_disabled(self.params.get("enabled")):
@@ -183,7 +174,7 @@ class PathAssertionCheck(InfrahubCheck):
             else self.params.get("destination_id")
         )
         max_depth = self.params.get("max_depth", 8)
-        url = self._path_traversal_url()
+        url = self._rule_url(rule)
         url_block = f"\n\nInspect in UI:\n{url}" if url else ""
 
         if not paths:
