@@ -3,25 +3,25 @@
 ## What is it?
 
 A way to write down the rule *"this must connect to that, only
-through these approved points, and never through those"* once — and
+through these approved points, and never through those"* once, and
 have it re-checked automatically every time anything in your
 environment changes. Before a change goes live, you get a yes/no per
 rule and a one-click view of exactly where a "no" would happen.
 
 ## Why should I care?
 
-Most organizations carry these rules only in senior people's heads —
+Most organizations carry these rules only in senior people's heads:
 *"customer traffic must never bypass the inspection layer"*, *"EU
 data must stay in the EU"*, *"the audit data store is never reachable
 from the guest network"*. When a change quietly breaks one, the
 failure shows up late: a midnight outage, a failed audit, a regulator
 letter, a customer call. This pattern catches it at review time,
-before anyone hits "merge" — so the rule survives staff turnover and
+before anyone hits "merge", so the rule survives staff turnover and
 stays current as the business grows.
 
 **Reachability is a topology notation, not a network-only idea.** Any
-graph source of truth — network topology, regulatory scope, security
-zones, agent delegation, service dependencies, capacity — admits the
+graph source of truth (network topology, regulatory scope, security
+zones, agent delegation, service dependencies, capacity) admits the
 question *"does X reach Y subject to these constraints?"* This
 repository makes that question a first-class Infrahub object,
 evaluated on every proposed change.
@@ -31,7 +31,7 @@ evaluated on every proposed change.
 > **Where this came from.** Infrahub 1.10 introduced path traversal
 > at AutoCon. The follow-up questions were uniformly *"can this also
 > be used for impact assessment? firewall compliance? maintenance
-> drain?"* The answer is yes, every one of them — with primitives
+> drain?"* The answer is yes, every one of them, with primitives
 > Infrahub already ships. This repository is the worked example.
 
 > **Works in Infrahub today, no product changes.** The schema, check,
@@ -79,7 +79,7 @@ by a Python script that re-derives the topology from flat tables on
 every run: fetch devices, interfaces, BGP sessions, prefixes; rebuild
 adjacency in memory; iterate every source / destination / path
 permutation; apply the rule. You reconstruct the graph in code, by
-hand, with no help from the system that already holds it — and the
+hand, with no help from the system that already holds it, and the
 moment the schema grows or a new device kind appears, the script
 silently stops covering cases.
 
@@ -91,7 +91,7 @@ rule declares the predicate, no user code enumerates permutations. A
 script cannot ask that question without re-deriving the graph; the
 graph answers it natively.
 
-Without that — even with sound data — the invariants live in people,
+Without that, even with sound data, the invariants live in people,
 not in the system:
 
 - **Slack threads and tribal knowledge.** A senior engineer eyeballs
@@ -101,7 +101,7 @@ not in the system:
   the broken path twenty minutes later, somebody rolls back.
 - **One-off scripts.** A Python script in someone's home directory,
   run against a snapshot that drifted from production three releases
-  ago — re-deriving the same graph the source of truth already holds.
+  ago, re-deriving the same graph the source of truth already holds.
 - **Diagrams in Confluence.** Out of date the day after they are
   drawn, disconnected from the data that drives the deployment.
 
@@ -112,7 +112,7 @@ every time. By the time anyone notices, the change is in.
 ### What Infrahub delivers
 
 1. **Rules are graph data.** A `TopologyReachabilityRule` sits in the
-   same database as the topology it asserts on — same branch diff,
+   same database as the topology it asserts on, same branch diff,
    same review workflow.
 2. **Graph traversal answers reachability natively.**
    `InfrahubPathTraversal` returns the actual hops between two nodes,
@@ -133,12 +133,12 @@ returned path may include one). Both endpoints accept any node kind
 via `peer: CoreNode`, so a rule can be device-to-device,
 flow-to-firewall-zone, tenant-to-tenant, or service-to-service.
 Adding, tightening, or retiring a rule is itself a reviewable graph
-diff — one place to look for "what does this rule assert?"
+diff: one place to look for "what does this rule assert?"
 
 ### Step 2: Graph traversal answers the reachability question
 
 When a proposed change opens, `InfrahubPathTraversal` finds every
-path from source to destination on the proposed-change branch — up to
+path from source to destination on the proposed-change branch, up to
 `max_depth` hops, capped at `max_paths`, excluding rule and
 constraint nodes themselves so the rule does not appear as a 1-hop
 shortcut. The check evaluates the actual graph after the change,
@@ -169,7 +169,7 @@ clicks once and sees the offending path.
 Three roles, enforced by object permissions:
 
 - **Automation specialist** builds the check once (this repo).
-- **Operations team** owns rules and constraints — sole holders of
+- **Operations team** owns rules and constraints, sole holders of
   create / update / delete on `Topology:ReachabilityRule` and
   `Topology:ReachabilityConstraint`.
 - **Network engineers** change the topology freely but cannot edit
@@ -177,16 +177,16 @@ Three roles, enforced by object permissions:
   change.
 
 Network engineers stop carrying the worry about whether their change
-broke a topology guarantee — the check absorbs it. Rules live on a
+broke a topology guarantee. The check absorbs it. Rules live on a
 smaller team, slower cadence; topology lives on the engineers, day
 to day.
 
-## Beyond reachability — same notation, many invariants
+## Beyond reachability: same notation, many invariants
 
 Same `source → destination + hop predicates` rule shape, different
 parts of the graph. Adding a domain typically means a new
 hop-predicate vocabulary (e.g., `hop_attribute_ge` for capacity,
-`disjoint_paths` for redundancy) — not rebuilding the pipeline:
+`disjoint_paths` for redundancy), not rebuilding the pipeline:
 
 | Use case                       | Rule shape                                                                 |
 | ------------------------------ | -------------------------------------------------------------------------- |
