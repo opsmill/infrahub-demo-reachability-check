@@ -1,0 +1,24 @@
+---
+apiVersion: infrahub.app/v1
+kind: Object
+spec:
+  kind: InfraDevice
+  data:
+    - name: atl1-edge1
+      description: "Atlanta edge router."
+      asn:
+        kind: InfraAutonomousSystem
+        hfid:
+          - "64496"
+    - name: jfk1-edge1
+      description: "New York edge router."
+      asn:
+        kind: InfraAutonomousSystem
+        hfid:
+          - "64496"
+    - name: dfw1-edge1
+      description: "Dallas edge router."
+      asn:
+        kind: InfraAutonomousSystem
+        hfid:
+          - "64496"

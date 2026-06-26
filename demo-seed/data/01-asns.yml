@@ -1,0 +1,15 @@
+---
+apiVersion: infrahub.app/v1
+kind: Object
+spec:
+  kind: InfraAutonomousSystem
+  data:
+    - name: Duff
+      asn: 64496
+      description: "Our own backbone AS — the approved transit."
+    - name: Colt Technology Services
+      asn: 8220
+      description: "Forbidden transit AS for the demo rules."
+    - name: Verizon
+      asn: 701
+      description: "Neutral transit AS."

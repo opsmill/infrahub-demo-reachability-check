@@ -1,30 +1,43 @@
-"""Bootstrap reachability rules + constraints from human-friendly references.
+"""Bootstrap the reachability-check demo against a running Infrahub 1.10.
 
-`DemoReachabilityRule.source` and `.destination` are `peer: CoreNode`, so the
-YAML loader (`infrahubctl object load`) cannot resolve them by hfid — it
-needs UUIDs. This script accepts a list of rules with `kind` + `hfid` for
-source and destination, resolves them via the SDK, and creates / upserts
-the rule and constraint nodes.
+Run after `docker compose up -d` is healthy. Requires SDK 1.22+
+(`pip install infrahub-sdk==1.22.0`) and a populated `.env` (or
+INFRAHUB_ADDRESS / INFRAHUB_API_TOKEN env vars).
 
-The forbidden ASN here is AS8220 (Colt Communications) — already wired
-into the standard demo data on both atl1 and jfk1 via existing BGP
-sessions. With `atl1-edge1.asn = AS64496` on main, no depth<=3 path
-between atl1 and jfk1 transits AS8220, so the baseline check passes.
-The recorded demo PC only needs to repoint atl1-edge1.asn to AS8220
-to surface a 3-hop path through the forbidden ASN.
+Steps:
+  1. Load the network schema (InfraDevice, InfraAutonomousSystem, InfraBGPSession).
+  2. Load ASNs, devices, BGP sessions.
+  3. Load the reachability-check schema (DemoReachabilityRule + DemoReachabilityConstraint).
+  4. Create the reachability-rules group + two rules with their constraints.
 
-Edit the RULES list below to describe your topology, then run:
-
-    INFRAHUB_ADDRESS=... INFRAHUB_API_TOKEN=... \
-        uv run python scripts/bootstrap.py
+The check itself runs inside Infrahub workers via the `.infrahub.yml`
+registration — which is loaded automatically once you register this repo
+as a CoreRepository in the Infrahub UI. This script does not register
+the repository; it only seeds the data the check operates on.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 from infrahub_sdk import Config, InfrahubClient
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+SCHEMAS = [
+    "demo-seed/schemas/network.yml",
+    "schemas/reachability.yml",
+]
+DATA_FILES = [
+    "demo-seed/data/01-asns.yml",
+    "demo-seed/data/02-devices.yml",
+    "demo-seed/data/03-bgp-sessions.yml",
+    "data/group.yml",
+]
 
 GROUP_NAME = "reachability-rules"
 
@@ -57,12 +70,24 @@ RULES: list[dict] = [
 ]
 
 
-async def resolve(client: InfrahubClient, ref: dict) -> str:
+def _run(cmd: list[str]) -> None:
+    print("$", " ".join(cmd), flush=True)
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+
+
+def _load_schemas_and_data() -> None:
+    for schema in SCHEMAS:
+        _run(["infrahubctl", "schema", "load", schema])
+    for data in DATA_FILES:
+        _run(["infrahubctl", "object", "load", data])
+
+
+async def _resolve(client: InfrahubClient, ref: dict) -> str:
     node = await client.get(kind=ref["kind"], hfid=[ref["hfid"]])
     return node.id
 
 
-async def main() -> None:
+async def _seed_rules() -> None:
     client = InfrahubClient(
         config=Config(
             address=os.environ["INFRAHUB_ADDRESS"],
@@ -79,8 +104,8 @@ async def main() -> None:
     await group.members.fetch()
 
     for spec in RULES:
-        source_id = await resolve(client, spec["source"])
-        destination_id = await resolve(client, spec["destination"])
+        source_id = await _resolve(client, spec["source"])
+        destination_id = await _resolve(client, spec["destination"])
 
         existing = await client.filters(kind="DemoReachabilityRule", name__value=spec["name"])
         if existing:
@@ -127,5 +152,18 @@ async def main() -> None:
         print(f"  constraints: {len(spec.get('constraints', []))}")
 
 
+def main() -> None:
+    if "INFRAHUB_ADDRESS" not in os.environ or "INFRAHUB_API_TOKEN" not in os.environ:
+        print(
+            "ERROR: INFRAHUB_ADDRESS and INFRAHUB_API_TOKEN must be exported.\n"
+            "  e.g.  export INFRAHUB_ADDRESS=http://localhost:8000\n"
+            "        export INFRAHUB_API_TOKEN=06438eb2-8019-4776-878c-0941b1f1d1ec",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    _load_schemas_and_data()
+    asyncio.run(_seed_rules())
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

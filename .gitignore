@@ -1,2 +1,12 @@
 __pycache__/
 *.pyc
+
+# Local docker-compose overrides (e.g. host port mapping) — keep these
+# out of the upstream repo. Drop a `docker-compose.override.yml` here
+# to customize for your machine without affecting community users.
+docker-compose.override.yml
+
+# uv / virtualenv / build artifacts
+.venv/
+*.egg-info/
+.uv-cache/

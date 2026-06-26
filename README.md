@@ -17,7 +17,7 @@ own Infrahub-controlled repo and register it.
 Network and platform engineers care about questions like:
 
 - "Can `atl1-edge1` reach `jfk1-edge1`, and is the path the path we approved?"
-- "Does every customer's traffic still avoid AS 8220 (Colt) end-to-end?"
+- "Does every customer's traffic still avoid AS8220 (Colt) end-to-end?"
 - "Did this PR accidentally introduce a path through the firewall bypass?"
 
 These are **invariants over the graph** — properties that must hold
@@ -156,14 +156,14 @@ graph TB
     subgraph RUN ["Runtime: example path atl1-edge1 → jfk1-edge1"]
         direction LR
         H0["atl1-edge1<br/>(InfraDevice)"] --> H1["Eth1/1<br/>(InfraInterface)"]
-        H1 --> H2["AS 64496<br/>(InfraAutonomousSystem)"]
+        H1 --> H2["AS64496<br/>(InfraAutonomousSystem)"]
         H2 --> H3["Eth0/2<br/>(InfraInterface)"]
         H3 --> H4["jfk1-edge1<br/>(InfraDevice)"]
     end
 
     subgraph EVAL ["Evaluation, one constraint at a time"]
         direction TB
-        Req["<b>required</b> hop_kind=AS asn=64496<br/>→ AS 64496 hop present ✔"]
+        Req["<b>required</b> hop_kind=AS asn=64496<br/>→ AS64496 hop present ✔"]
         Fbd["<b>forbidden</b> hop_kind=AS asn=65999<br/>→ no matching hop ✔"]
         Anyo["<b>any_of</b> {asn=65001, asn=65002}<br/>→ at least one match required"]
     end

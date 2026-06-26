@@ -1,0 +1,88 @@
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/schema/latest.json
+#
+# Minimal network schema for the reachability-check demo. Just enough to make
+# rule fan-out, path traversal, and constraint matching visible end-to-end:
+#
+#   InfraAutonomousSystem  (asn)
+#   InfraDevice            (name, asn -> InfraAutonomousSystem)
+#   InfraBGPSession        (local_device, remote_device, remote_as)
+#
+# A path between two InfraDevice instances therefore traverses:
+#   device -> bgp session -> device         (depth 2)
+#   device -> asn -> bgp session -> device  (depth 3)
+#
+# Real production Infrahub instances would use the full models/base schemas;
+# we strip them down here so seeding is cheap and the test runs in seconds.
+---
+version: "1.0"
+
+nodes:
+  - name: AutonomousSystem
+    namespace: Infra
+    label: "Autonomous System"
+    icon: "mdi:graph-outline"
+    human_friendly_id: ["asn__value"]
+    display_label: "AS{{ asn__value }} ({{ name__value }})"
+    order_by: ["asn__value"]
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: asn
+        kind: Number
+        unique: true
+      - name: description
+        kind: Text
+        optional: true
+
+  - name: Device
+    namespace: Infra
+    label: "Device"
+    icon: "mdi:router-network"
+    human_friendly_id: ["name__value"]
+    display_label: "{{ name__value }}"
+    order_by: ["name__value"]
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+      - name: description
+        kind: Text
+        optional: true
+    relationships:
+      - name: asn
+        peer: InfraAutonomousSystem
+        cardinality: one
+        kind: Attribute
+        optional: true
+        identifier: "device__asn"
+
+  - name: BGPSession
+    namespace: Infra
+    label: "BGP Session"
+    icon: "mdi:lan-connect"
+    human_friendly_id: ["local_device__name__value", "remote_device__name__value"]
+    display_label: "{{ local_device__name__value }} ↔ {{ remote_device__name__value }}"
+    attributes:
+      - name: description
+        kind: Text
+        optional: true
+    relationships:
+      - name: local_device
+        peer: InfraDevice
+        cardinality: one
+        kind: Attribute
+        optional: false
+        identifier: "bgp_session__local_device"
+      - name: remote_device
+        peer: InfraDevice
+        cardinality: one
+        kind: Attribute
+        optional: false
+        identifier: "bgp_session__remote_device"
+      - name: remote_as
+        peer: InfraAutonomousSystem
+        cardinality: one
+        kind: Attribute
+        optional: false
+        identifier: "bgp_session__remote_as"
