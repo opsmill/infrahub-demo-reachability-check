@@ -76,7 +76,27 @@ participates in the normal Infrahub workflow:
   page pre-filtered to the same source / destination / depth /
   excluded-kinds the check evaluated.
 
-### RBAC — who gets to author the rules
+### Separation of duties — three roles, one workflow
+
+Each role owns one layer, so engineers can move fast without breaking
+topologies. The engineer making a change can't loosen the guardrail
+that checks it.
+
+1. **Automation specialist** — builds the path-traversal check *once*:
+   the logic that turns the graph into a verdict. Lives in this repo:
+   `checks/path_assertion.py`, the stored `path_check` query, the
+   `path_traversal_url` transform, and the schema extension. Reviewed
+   like any other code change.
+2. **Operations team** — defines the *dynamic rules*: which paths must
+   hold, which transits are forbidden, how deep to look. They author
+   `TopologyReachabilityRule` and `TopologyReachabilityConstraint`
+   instances in the graph — diffable, branchable, audit-logged.
+3. **Network engineers** — change the *intent data*: device ASNs,
+   interfaces, BGP sessions, the whole topology graph. They never
+   worry about breaking topologies, because the rules catch it on
+   every proposed change.
+
+### RBAC — locking the rule surface down
 
 The reachability rules themselves are a sensitive surface: if any
 engineer can edit them, the check becomes advisory rather than
@@ -85,20 +105,21 @@ the schema-kind level.
 
 The shape is:
 
-- **Engineers** keep their existing read-write role across the rest of
-  the network graph (devices, interfaces, BGP sessions, …).
+- **Network engineers** keep their existing read-write role across the
+  rest of the network graph (devices, interfaces, BGP sessions, …).
 - The "Global read-write" role gets a small set of **DENY** object
   permissions on the rule surface — typically `Topology:ReachabilityRule`
   and `Topology:ReachabilityConstraint`, on `create`, `update`, and
   `delete`. DENY beats ALLOW.
-- **Super Administrators** retain authoring access via their
+- The **Operations team** has authoring access (allow on the rule
+  surface). **Super Administrators** retain authoring access via their
   wildcard-allow permission.
 
-The net effect: engineers can author topology changes that *trigger*
-the check, and watch it pass or fail on every PC — but they cannot
-silently weaken the assertions to make their own PC merge. The
+The net effect: network engineers can author topology changes that
+*trigger* the check, and watch it pass or fail on every PC — but they
+cannot silently weaken the assertions to make their own PC merge. The
 authoring of new rules is itself a separate, reviewable workflow done
-by a smaller group.
+by the operations team.
 
 You configure this with Infrahub's standard role / object-permission
 UI (or via `CoreAccountRole` + `CoreObjectPermission` nodes loaded
@@ -110,6 +131,11 @@ through the SDK). Concretely:
 
 See the Infrahub docs for role/permission authoring details — the
 mechanism is the same one you'd use to lock down any other kind.
+
+> **Works in Infrahub today, with no product changes.** The three-role
+> separation is enforced entirely by built-in object permissions; the
+> rules themselves are graph nodes; the check is a normal
+> `CoreCheckDefinition`.
 
 ## How it works under the hood
 
@@ -185,11 +211,11 @@ graph TB
 
 ## Constraint polarities
 
-| Polarity   | Semantics                                                        |
-| ---------- | ---------------------------------------------------------------- |
-| `required` | At least one returned path must contain a matching hop.          |
-| `forbidden`| **No** returned path may contain a matching hop (global).        |
-| `any_of`   | At least one `any_of` constraint must match per path.            |
+| Polarity (UI label) | Enum name   | Semantics                                                 |
+| ------------------- | ----------- | --------------------------------------------------------- |
+| **Must transit**    | `required`  | At least one returned path must contain a matching hop.   |
+| **Never transit**   | `forbidden` | **No** returned path may contain a matching hop (global). |
+| **Any of**          | `any_of`    | At least one `any_of` constraint must match per path.     |
 
 A constraint matches a hop when `hop["kind"] == hop_kind`. If
 `attribute_name` is set, the hop node's attribute value must also equal
@@ -199,17 +225,52 @@ A constraint matches a hop when `hop["kind"] == hop_kind`. If
 
 ```text
 reachability_check/
-  .infrahub.yml              # registers schema, query, check, menu
-  .gitignore                 # excludes __pycache__
-  schemas/reachability.yml   # TopologyReachabilityRule + TopologyReachabilityConstraint
-  menus/reachability.yml     # "Reachability Check" sidebar entry → rule list
-  queries/path_check.gql     # parameterised InfrahubPathTraversal
-  checks/path_assertion.py   # PathAssertionCheck
-  data/group.yml             # the reachability-rules group
-  data/rules.yml             # rule instances (source/destination by hfid)
-  data/constraints.yml       # per-rule hop predicates
-  scripts/bootstrap.py       # resolves hfids → UUIDs and creates rules/constraints
+  .infrahub.yml                       # registers schema, query, check, menu, transform
+  .gitignore                          # excludes __pycache__
+  schemas/reachability.yml            # TopologyReachabilityRule + TopologyReachabilityConstraint
+  menus/reachability.yml              # "Reachability Check" sidebar entry → rule list
+  queries/path_check.gql              # parameterised InfrahubPathTraversal (used by the check)
+  queries/rule_url.gql                # fetches rule data for the URL transform
+  transforms/path_traversal_url.py    # Python computed-attribute transform (server-side)
+  checks/path_assertion.py            # PathAssertionCheck
+  data/group.yml                      # the reachability-rules group
+  data/rules.yml                      # rule instances (source/destination by hfid)
+  data/constraints.yml                # per-rule hop predicates
+  scripts/bootstrap.py                # resolves hfids → UUIDs and creates rules/constraints
 ```
+
+## Click-through URL — a Python computed attribute
+
+Each rule exposes a `path_traversal_url` attribute that opens
+`/path-traversal` pre-filtered to the rule's source / destination /
+depth / max-paths / excluded-kinds. The value is **computed
+server-side** by a Python transform
+(`transforms/path_traversal_url.py`), registered in `.infrahub.yml`
+as a `python_transform` and wired into the schema with:
+
+```yaml
+- name: path_traversal_url
+  kind: Text
+  read_only: true
+  computed_attribute:
+    kind: TransformPython
+    transform: path_traversal_url
+```
+
+Whenever any of the rule's inputs change (source, destination,
+max_depth, max_paths), Infrahub's task workers re-run the transform
+and update the value. The check reads it directly from the rule
+(`rule.path_traversal_url.value`) when building the verdict log line —
+no Python URL construction inside the check.
+
+Why this matters:
+
+- **One source of truth** for the URL. The UI sees the same string the
+  check emits.
+- **Branch-aware**: on a branch with a tightened `max_depth`, the URL
+  reflects the branch value automatically.
+- **Easier to extend**: add a new query parameter (e.g. a constraint
+  fingerprint) by editing the transform — no check change required.
 
 ## How to deploy this in your Infrahub
 
@@ -262,8 +323,9 @@ You will almost certainly need to **tune this list for your topology**.
 Two common situations:
 
 - **A kind in the default list doesn't exist in your schema.** Remove
-  it, or the GraphQL call will fail outright. The `demo` branch ships
-  a minimal schema and drops `InfraPlatform` for exactly this reason.
+  it, or the GraphQL call will fail outright. The `live-demo` branch
+  ships a minimal schema and drops `InfraPlatform` for exactly this
+  reason.
 - **Your topology has its own "shortcut" kinds.** Anything that
   cardinality-many-relates a large fraction of nodes (e.g. a shared
   `Organization`, `Tag`, `Site`, `Tenant`, or a global `Vendor` node)
@@ -280,7 +342,7 @@ If you change the namespace or rename the kinds, update **three**
 places in lock-step:
 
 1. `excluded_kinds` array in `queries/path_check.gql` (what the check evaluates)
-2. `EXCLUDED_KINDS` tuple in `checks/path_assertion.py` (what the verdict URL emits)
+2. `EXCLUDED_KINDS` tuple in `transforms/path_traversal_url.py` (what the verdict URL points at)
 3. `kind:` strings in `schemas/reachability.yml`, `data/*.yml`, and the
    `class PathAssertionCheck` references
 
@@ -288,7 +350,7 @@ places in lock-step:
 
 - **Stored `.gql` is mandatory** on the `main` branch pattern. Infrahub's
   repo sync resolves the check's `query` attribute against a registered
-  `CoreGraphQLQuery`. (The `demo` branch of this repo shows an
+  `CoreGraphQLQuery`. (The `live-demo` branch of this repo shows an
   alternative using the SDK 1.22 `traverse_paths()` API directly.)
 - **No "what-if" preview outside a proposed change.** The check fires
   inside the proposed-change pipeline. To explore a path on a branch
@@ -306,9 +368,51 @@ places in lock-step:
   `choices` list. If you frequently add new kinds, consider switching
   to `Text`.
 
-## Try the demo
+## Beyond reachability — same pattern, more invariants
 
-The `demo` branch of this repo ships a `docker-compose.yml` pinned to
-Infrahub 1.10, a small seed dataset, and a check rewritten against the
-1.22 SDK's new `traverse_paths()` API. Check out the branch, run
-`docker compose up`, and the full walkthrough lives in `DEMO.md`.
+Reachability is the first concrete shape, not the only one. The same
+recipe — a schema-extended *rule node* + a `targets:` fan-out check
+over `InfrahubPathTraversal` / `InfrahubReachableNodes` — answers a
+much wider family of graph invariants, evaluated on every proposed
+change:
+
+| Use case                          | What the rule asserts                                                |
+| --------------------------------- | -------------------------------------------------------------------- |
+| **Firewall compliance**           | Every flow path crosses the required inspection zone, never an unapproved bypass. <br/>`must transit: fw-zone · never: bypass` |
+| **Change impact assessment**      | Before a change merges, diff the source-to-destination paths it would break. <br/>`diff: reachable paths · before vs after` |
+| **Path redundancy**               | Critical pairs keep two disjoint paths, so losing one link still satisfies the rule. <br/>`require: 2 disjoint paths` |
+| **Tenant & zone segmentation**    | Prove one tenant or security zone can never reach another, by construction. <br/>`never reachable: other-tenant` |
+| **Latency & SLA bounds**          | Reachable within a hop budget along approved low-latency transit, or the change fails. <br/>`within: 3 hops · transit: low-latency` |
+| **Maintenance drain safety**      | Confirm dependent paths reroute before a node is drained for maintenance. <br/>`require: reroute before drain` |
+| **Dependency & blast-radius**     | From any node, list everything it reaches, so you see what an outage or change would affect. <br/>`reachable from: node · target kinds` |
+| **Continuous compliance**         | Every change is checked against policy and recorded, with a full queryable audit trail. <br/>`policy holds · on every change` |
+
+The reachability rule shipped here is the worked example. The other
+invariants follow the same skeleton — a different schema (e.g. two
+disjoint-path counters, a hop-budget integer, a tenant boundary set)
+plus a check that interprets the constraints — but the proposed-change
+pipeline, the RBAC story, and the click-through URL pattern are
+identical.
+
+> **Future demos.** Today only the **reachability** scenario ships
+> with a runnable docker-compose demo (the `live-demo` branch). If
+> there's demand for any of the other use-cases above, additional
+> demo branches (`live-demo-firewall-compliance`,
+> `live-demo-path-redundancy`, etc.) will follow. Open an issue or
+> drop a note in the OpsMill Discord (`discord.gg/opsmill`) to vote.
+
+## Try the live demo
+
+The [`live-demo`](../../tree/live-demo) branch of this repo ships a
+`docker-compose.yml` pinned to Infrahub 1.10, a small seed dataset, and
+the check wired against the 1.22 SDK's new `traverse_paths()` API. It
+mirrors the three one-field scenarios from the demo video (one PASS,
+two FAILs — by Sofia Hernandez, Chloe O'Brian, and Administrator).
+
+```bash
+git checkout live-demo
+uv run invoke demo.up       # docker compose up + load schema + seed + create rules
+open http://localhost:8000  # admin / infrahub
+```
+
+Full walkthrough lives in `DEMO.md` on that branch.

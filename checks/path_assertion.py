@@ -10,7 +10,6 @@ InfrahubPathTraversal against the required / forbidden / any_of constraints.
 from __future__ import annotations
 
 import asyncio
-import os
 from collections import defaultdict
 from typing import Any
 
@@ -18,23 +17,6 @@ from infrahub_sdk.checks import InfrahubCheck
 
 GRAPHQL_VARS = ("source_id", "destination_id", "max_depth", "max_paths")
 FALSEY_STRINGS = frozenset({"false", "no", "0", "off"})
-
-# The worker's view of Infrahub (`INFRAHUB_ADDRESS` inside docker-compose)
-# is usually not browser-reachable, so we hard-code a sensible default for
-# the standard local dev stack and let operators override per-environment
-# via INFRAHUB_PUBLIC_URL (e.g. https://infrahub.your-company.com).
-PUBLIC_URL_ENV = "INFRAHUB_PUBLIC_URL"
-DEFAULT_PUBLIC_URL = "http://localhost:8000"
-
-# Must mirror `excluded_kinds:` in queries/path_check.gql — keeping them in
-# sync ensures the UI link the verdict points at shows the same paths the
-# check evaluated. Without this, the path-traversal page would include the
-# rule/constraint nodes as 1-hop shortcuts between source and destination.
-EXCLUDED_KINDS = (
-    "TopologyReachabilityRule",
-    "TopologyReachabilityConstraint",
-    "InfraPlatform",
-)
 
 
 def _is_disabled(value: Any) -> bool:
@@ -77,27 +59,21 @@ class PathAssertionCheck(InfrahubCheck):
             variables=variables,
         )
 
-    def _path_traversal_url(self) -> str | None:
-        """Build an absolute path-traversal URL for the verdict log line.
+    @staticmethod
+    def _rule_url(rule: Any) -> str | None:
+        """Pull the rule's computed `path_traversal_url` value, if any.
 
-        The base URL comes from ``$INFRAHUB_PUBLIC_URL`` (set this in your
-        worker environment if Infrahub is not at the default), falling back
-        to ``http://localhost:8000`` for the standard ``invoke dev.start``
-        stack. Returns None if either endpoint UUID is missing.
+        The URL is built server-side by the ``path_traversal_url`` Python
+        transform (see ``transforms/path_traversal_url.py``) and stored on
+        the rule as a read-only computed attribute. The check just reads it.
         """
-        source_id = self.params.get("source_id")
-        destination_id = self.params.get("destination_id")
-        if not source_id or not destination_id:
+        attribute = getattr(rule, "path_traversal_url", None)
+        if attribute is None:
             return None
-        base = (os.environ.get(PUBLIC_URL_ENV) or DEFAULT_PUBLIC_URL).rstrip("/")
-        query = f"source={source_id}&destination={destination_id}"
-        for param_key, url_key in (("max_depth", "depth"), ("max_paths", "maxPaths")):
-            value = self.params.get(param_key)
-            if value is not None:
-                query += f"&{url_key}={value}"
-        for kind in EXCLUDED_KINDS:
-            query += f"&excludedKinds={kind}"
-        return f"{base}/path-traversal?{query}"
+        value = getattr(attribute, "value", None)
+        if not value:
+            return None
+        return str(value)
 
     async def validate(self, data: dict) -> None:
         if _is_disabled(self.params.get("enabled")):
@@ -129,7 +105,7 @@ class PathAssertionCheck(InfrahubCheck):
         source_label = (result.get("source") or {}).get("display_label") or self.params.get("source_id")
         dest_label = (result.get("destination") or {}).get("display_label") or self.params.get("destination_id")
         max_depth = self.params.get("max_depth", 8)
-        url = self._path_traversal_url()
+        url = self._rule_url(rule)
         url_block = f"\n\nInspect in UI:\n{url}" if url else ""
 
         if not paths:

@@ -8,6 +8,17 @@ menus:
 queries:
   - name: path_check
     file_path: queries/path_check.gql
+  - name: rule_url
+    file_path: queries/rule_url.gql
+
+# Python transform that backs the `path_traversal_url` computed attribute
+# on `TopologyReachabilityRule`. Runs server-side whenever a rule (or its
+# dependencies) changes; the returned string is stored on the rule and read
+# by the check at evaluation time.
+python_transforms:
+  - name: path_traversal_url
+    class_name: PathTraversalUrl
+    file_path: transforms/path_traversal_url.py
 
 # The check fans out over the reachability-rules group. The runner extracts
 # the listed path expressions from each member rule into self.params. The

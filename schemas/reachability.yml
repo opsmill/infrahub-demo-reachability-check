@@ -36,6 +36,20 @@ nodes:
         kind: Boolean
         default_value: true
         order_weight: 2400
+      # Server-side computed attribute — a Python transform builds the
+      # click-through URL to the path-traversal page using the rule's
+      # source/destination/depth/maxPaths and the canonical EXCLUDED_KINDS.
+      # The check reads this value at evaluation time instead of building
+      # the URL itself.
+      - name: path_traversal_url
+        kind: Text
+        read_only: true
+        optional: true
+        order_weight: 5000
+        description: "Click-through URL to /path-traversal pre-filtered to this rule's hops."
+        computed_attribute:
+          kind: TransformPython
+          transform: path_traversal_url
     relationships:
       - name: source
         peer: CoreNode
@@ -77,18 +91,21 @@ nodes:
         default_value: required
         optional: true
         order_weight: 900
+        # Labels match the vocabulary used in the customer-facing demo
+        # ("must transit" / "never transit") while the enum names stay
+        # stable so existing data / data-loader YAML keeps working.
         choices:
           - name: required
-            label: Required
+            label: Must transit
             description: "Path must include this hop."
             color: "#7fbf7f"
           - name: forbidden
-            label: Forbidden
-            description: "Path may not include hop."
+            label: Never transit
+            description: "Path may not include this hop."
             color: "#ff8080"
           - name: any_of
-            label: Any-of
-            description: "At least one must match."
+            label: Any of
+            description: "At least one of the any-of constraints must match per path."
             color: "#a0a0ff"
       - name: hop_kind
         kind: Dropdown
