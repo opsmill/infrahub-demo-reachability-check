@@ -1,14 +1,17 @@
 # Reachability Check — via Graph Traversal
 
-A drop-in pattern that turns reachability invariants ("must transit AS X",
-"may never transit AS Y") into Infrahub checks. Rules live in the graph
-as first-class objects, are diffable on every branch, and the check fans
-out per rule on every proposed change.
+**Reachability is a topology notation.** Anywhere your source of truth
+is a graph — networks, compliance flows, security zones, link
+capacity, service dependencies — "does *X* reach *Y* subject to these
+constraints?" is the same question. This repo turns that question
+into a first-class Infrahub object, diffable on every branch and
+evaluated on every proposed change.
 
 Built on the Infrahub 1.10 surface: stored GraphQL queries,
-`InfrahubPathTraversal`, `CoreCheckDefinition` with `targets:`, and a
-user-extended schema. No backend changes — copy this repo into your
-own Infrahub-controlled repo and register it.
+`InfrahubPathTraversal`, `CoreCheckDefinition` with `targets:`, a
+user-extended schema, and a Python computed-attribute transform. No
+backend changes — copy this repo into your own Infrahub-controlled
+repo and register it.
 
 📺 **Watch the walkthrough:** [Reachability Check via Graph Traversal on YouTube](https://www.youtube.com/watch?v=guyEHTsqruI)
 — the video covers the same flow as the rest of this README, end to end,
@@ -16,48 +19,67 @@ including the proposed-change verdict cards and the RBAC narrative.
 
 ---
 
-## When / why teams need this
+## What "reachability" buys you, across domains
 
-Network and platform engineers care about questions like:
+Reachability is not a network-only idea. The pattern shipped here
+expresses *any* graph invariant of the form "from this source, with
+these allowed/forbidden hops, can I get to that destination?" — and
+the same rule + check machinery evaluates them all. Some examples
+teams typically ask for:
 
-- "Can `atl1-edge1` reach `jfk1-edge1`, and is the path the path we approved?"
-- "Does every customer's traffic still avoid AS8220 (Colt) end-to-end?"
-- "Did this PR accidentally introduce a path through the firewall bypass?"
+- **Routing / transit assertions** — "Atlanta-to-NYC must transit AS64496
+  and never AS8220." The worked example in this repo.
+- **Firewall & compliance** — "Every customer-to-database flow path
+  must transit `fw-zone`, and no path may bypass it." Same shape, just
+  swap source/destination/constraint kinds.
+- **Capacity reachability** — "Atlanta must reach NYC with at least
+  10 Gb/s of usable transit capacity along the path." Source: the
+  device. Destination: the device. Constraints: a hop predicate that
+  reads link `bandwidth` attribute.
+- **Tenant & zone segmentation** — "Tenant A's data plane is *never*
+  reachable from tenant B's, at any depth." A `forbidden` rule with
+  source/destination spanning the two zones.
+- **Service & dependency graphs** — "Order-service must reach
+  payment-service via approved internal APIs only, never via the public
+  egress proxy."
+- **Continuous compliance audits** — every rule, every proposed change,
+  with a full diffable history of which paths held when.
 
-These are **invariants over the graph** — properties that must hold
-across the topology after every change. They are easy to write down on
-paper, easy to enforce at runtime once traffic flows, and **hard to catch
-at change-review time** before the change merges.
+All of those are **the same notation** — `source → destination + hop
+predicates` — applied to different parts of the graph. Slide 17 in
+the demo deck calls these out as "one pattern, many invariants" for
+exactly this reason.
 
-## How teams do it today
+## How teams do this today (without the pattern)
 
-Without something like this pattern, reachability assertions live in
-people, not in the system:
+Whichever domain you pick, the un-Infrahub'd version of the workflow
+looks the same:
 
 - **Slack threads and tribal knowledge**: "Don't merge this until you
-  check that atl1 still hits jfk1 via 64496." A senior engineer
+  check that the flow still terminates at `fw-zone`." A senior engineer
   eyeballs the diff. The newer engineer doesn't even know to ask.
 - **Post-deploy fire-fighting**: the change merges, monitoring catches
   the broken path 20 minutes later, somebody rolls back.
 - **One-off scripts**: a Python script in `~/scripts/` that nobody else
-  runs, against a `netdb` snapshot that drifted from production three
-  releases ago.
+  runs, against a snapshot of the source of truth that drifted from
+  production three releases ago.
 - **Diagrams in Confluence**: out of date the day after they're drawn,
-  and disconnected from the data that drives the network.
+  and disconnected from the data that drives the deployment.
 
-The common failure mode is the same: the invariants are *not authored
-where the change is reviewed*. By the time anyone notices, the change
-is already in.
+The common failure mode: the invariants are *not authored where the
+change is reviewed*. By the time anyone notices, the change is in.
 
 ## What you get with Infrahub
 
-This pattern turns each reachability invariant into a graph node that
-participates in the normal Infrahub workflow:
+This pattern turns each reachability invariant — wherever it lives in
+your graph — into a node that participates in the normal Infrahub
+workflow:
 
 - **Rules are objects** (`TopologyReachabilityRule`) with `source`,
   `destination`, traversal depth/cap, and zero or more `constraints`.
   Both endpoints are `peer: CoreNode` — a rule can connect any two node
-  kinds (device-to-device, prefix-to-device, AS-to-AS — your call).
+  kinds in your graph (device-to-device, flow-to-firewall-zone,
+  service-to-service, tenant-to-tenant, prefix-to-device — your call).
 - **Constraints are children of the rule** (`TopologyReachabilityConstraint`)
   with three polarities: `required` (path must include a matching hop),
   `forbidden` (no returned path may include one — *global invariant*),
@@ -368,38 +390,43 @@ places in lock-step:
   `choices` list. If you frequently add new kinds, consider switching
   to `Text`.
 
-## Beyond reachability — same pattern, more invariants
+## Same notation, many invariants
 
-Reachability is the first concrete shape, not the only one. The same
-recipe — a schema-extended *rule node* + a `targets:` fan-out check
-over `InfrahubPathTraversal` / `InfrahubReachableNodes` — answers a
-much wider family of graph invariants, evaluated on every proposed
-change:
+Every use case below is **the same reachability question** — `source →
+destination + hop predicates` — pointed at a different part of the
+graph. The schema, the check, the proposed-change verdict cards, the
+RBAC story, and the click-through URL are identical; only the chosen
+endpoints and constraint hops change.
 
-| Use case                          | What the rule asserts                                                |
+| Use case                          | What the same rule shape expresses                                   |
 | --------------------------------- | -------------------------------------------------------------------- |
-| **Firewall compliance**           | Every flow path crosses the required inspection zone, never an unapproved bypass. <br/>`must transit: fw-zone · never: bypass` |
-| **Change impact assessment**      | Before a change merges, diff the source-to-destination paths it would break. <br/>`diff: reachable paths · before vs after` |
-| **Path redundancy**               | Critical pairs keep two disjoint paths, so losing one link still satisfies the rule. <br/>`require: 2 disjoint paths` |
-| **Tenant & zone segmentation**    | Prove one tenant or security zone can never reach another, by construction. <br/>`never reachable: other-tenant` |
-| **Latency & SLA bounds**          | Reachable within a hop budget along approved low-latency transit, or the change fails. <br/>`within: 3 hops · transit: low-latency` |
-| **Maintenance drain safety**      | Confirm dependent paths reroute before a node is drained for maintenance. <br/>`require: reroute before drain` |
-| **Dependency & blast-radius**     | From any node, list everything it reaches, so you see what an outage or change would affect. <br/>`reachable from: node · target kinds` |
-| **Continuous compliance**         | Every change is checked against policy and recorded, with a full queryable audit trail. <br/>`policy holds · on every change` |
+| **Routing / transit (this demo)** | "Atlanta-to-NYC must transit AS64496 and never AS8220." <br/>`source: device · destination: device · constraints: AS hops` |
+| **Firewall compliance**           | "Every flow path crosses the required inspection zone, never an unapproved bypass." <br/>`source: flow endpoint · constraints: must transit fw-zone, never bypass` |
+| **Capacity reachability**         | "Atlanta must reach NYC along a path whose every link carries ≥10 Gb/s." <br/>`constraints: hop attribute (bandwidth) ≥ N` |
+| **Tenant & zone segmentation**    | "Tenant A is never reachable from tenant B, at any depth." <br/>`forbidden: reach destination at all` |
+| **Path redundancy**               | "Critical pairs keep two disjoint paths, so losing one link still satisfies the rule." <br/>`require: 2 disjoint paths` |
+| **Latency & SLA bounds**          | "Reachable within a hop budget along approved low-latency transit, or the change fails." <br/>`within: N hops · constraints: transit low-latency` |
+| **Maintenance drain safety**      | "Confirm dependent paths reroute before a node is drained for maintenance." <br/>`require: reroute before drain` |
+| **Service & dependency graphs**   | "Order-service must reach payment-service via approved internal APIs only, never the public egress proxy." |
+| **Dependency & blast-radius**     | "From any node, list everything it reaches" — uses `InfrahubReachableNodes` instead of `InfrahubPathTraversal`. <br/>`reachable from: node · target kinds` |
+| **Change impact assessment**      | "Before a change merges, diff the source-to-destination paths it would break." <br/>`diff: reachable paths · before vs after` |
+| **Continuous compliance**         | "Every change is checked against policy and recorded, with a full queryable audit trail." <br/>`policy holds · on every change` |
 
-The reachability rule shipped here is the worked example. The other
-invariants follow the same skeleton — a different schema (e.g. two
-disjoint-path counters, a hop-budget integer, a tenant boundary set)
-plus a check that interprets the constraints — but the proposed-change
-pipeline, the RBAC story, and the click-through URL pattern are
-identical.
+Some of these need a richer constraint vocabulary than the
+`required` / `forbidden` / `any_of` polarities shipped here (e.g. a
+`hop_attribute_ge` for capacity, a `disjoint_paths` count for
+redundancy). The recipe for adding them is the same one used for
+the existing constraints: a new `polarity` choice, a few extra fields
+on `TopologyReachabilityConstraint`, and a branch in the check's
+`validate()` that interprets them.
 
-> **Future demos.** Today only the **reachability** scenario ships
-> with a runnable docker-compose demo (the `live-demo` branch). If
-> there's demand for any of the other use-cases above, additional
-> demo branches (`live-demo-firewall-compliance`,
-> `live-demo-path-redundancy`, etc.) will follow. Open an issue or
-> drop a note in the OpsMill Discord (`discord.gg/opsmill`) to vote.
+> **Future demos.** Today only the **routing / transit** scenario
+> ships with a runnable docker-compose demo (the `live-demo` branch
+> below). If there's demand for any of the other use-cases above,
+> additional demo branches (`live-demo-firewall-compliance`,
+> `live-demo-capacity-reachability`, `live-demo-tenant-segmentation`,
+> etc.) will follow. Open an issue or drop a note in the OpsMill
+> Discord (`discord.gg/opsmill`) to vote on which one comes next.
 
 ## Try the live demo
 
