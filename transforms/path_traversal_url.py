@@ -47,9 +47,34 @@ EXCLUDED_KINDS: tuple[str, ...] = (
 
 
 class PathTraversalUrl(InfrahubTransform):
+    """``TransformPython`` that backs the rule's ``path_traversal_url``.
+
+    The class is registered in ``.infrahub.yml`` under
+    ``python_transforms:`` and wired into the schema via
+    ``computed_attribute: { kind: TransformPython, transform:
+    path_traversal_url }`` on the rule's ``path_traversal_url``
+    attribute. Infrahub invokes ``transform(data)`` whenever the rule
+    or any of its source / destination / max_depth / max_paths inputs
+    change, and the returned string is stored on the rule.
+    """
+
     query = "rule_url"
 
     async def transform(self, data: dict[str, Any]) -> str:
+        """Render the path-traversal URL for a single rule.
+
+        ``data`` is the GraphQL payload of the ``rule_url`` query for
+        one ``TopologyReachabilityRule``. The transform reads
+        ``source.node.id``, ``destination.node.id``,
+        ``max_depth.value``, and ``max_paths.value`` directly off the
+        rule (no SDK hydration needed for a plain key lookup) and
+        emits a relative URL such as
+        ``/path-traversal?source=...&destination=...&depth=3&maxPaths=50&excludedKinds=...``.
+
+        Returns ``""`` (empty string) when the rule is missing a
+        source or destination; the Infrahub UI then renders the
+        attribute as empty rather than a broken link.
+        """
         edges = data.get("TopologyReachabilityRule", {}).get("edges") or []
         if not edges:
             return ""
