@@ -1,0 +1,160 @@
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/schema/latest.json
+---
+version: "1.0"
+
+nodes:
+  - name: ReachabilityRule
+    namespace: Demo
+    description: "Assertion that a path between any two graph nodes satisfies a set of hop constraints."
+    label: "Reachability Rule"
+    icon: "mdi:transit-connection-variant"
+    include_in_menu: false
+    human_friendly_id: ["name__value"]
+    display_label: "{{ name__value }}"
+    order_by: ["name__value"]
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 2000
+      # Tuning knobs — defaults are good for most rules. Pushed to the
+      # bottom of the form so users see name / description / source /
+      # destination / constraints first.
+      - name: max_depth
+        kind: Number
+        default_value: 8
+        order_weight: 2200
+      - name: max_paths
+        kind: Number
+        default_value: 50
+        order_weight: 2300
+      - name: enabled
+        kind: Boolean
+        default_value: true
+        order_weight: 2400
+    relationships:
+      - name: source
+        peer: CoreNode
+        cardinality: one
+        optional: false
+        kind: Attribute
+        identifier: "demo_reachability_rule__source"
+        order_weight: 800
+      - name: destination
+        peer: CoreNode
+        cardinality: one
+        optional: false
+        kind: Attribute
+        identifier: "demo_reachability_rule__destination"
+        order_weight: 850
+      - name: constraints
+        peer: DemoReachabilityConstraint
+        cardinality: many
+        kind: Component
+        identifier: "demo_reachability_rule__constraints"
+        order_weight: 900
+
+  - name: ReachabilityConstraint
+    namespace: Demo
+    description: "A single hop predicate evaluated against every returned path."
+    label: "Reachability Constraint"
+    icon: "mdi:filter-variant"
+    include_in_menu: false
+    human_friendly_id: ["rule__name__value", "label__value"]
+    display_label: "{{ label__value }}"
+    order_by: ["polarity__value", "hop_kind__value"]
+    uniqueness_constraints:
+      - ["rule", "label__value"]
+    attributes:
+      - name: polarity
+        kind: Dropdown
+        # Default to `required` — the most common constraint in practice.
+        # `optional: true` lets the UI accept the default silently.
+        default_value: required
+        optional: true
+        order_weight: 900
+        choices:
+          - name: required
+            label: Required
+            description: "Path must include this hop."
+            color: "#7fbf7f"
+          - name: forbidden
+            label: Forbidden
+            description: "Path may not include hop."
+            color: "#ff8080"
+          - name: any_of
+            label: Any-of
+            description: "At least one must match."
+            color: "#a0a0ff"
+      - name: hop_kind
+        kind: Dropdown
+        order_weight: 1000
+        description: "Schema kind of hop node."
+        # Ordered by impact / impressiveness for compliance, impact
+        # assessment and reachability use cases — security headlines
+        # first, then routing-policy assertions, then physical layout.
+        choices:
+          # Showcase entry — the standard demo set does not ship a
+          # dedicated firewall kind, so a constraint with this hop_kind
+          # will not match anything in the base demo. For real firewall
+          # assertions today, use `hop_kind: InfraDevice` +
+          # `attribute_name: role` + `attribute_value: firewall`.
+          - name: InfraFirewall
+            label: "Firewall"
+            description: ""
+            color: "#ff8080"
+          - name: InfraAutonomousSystem
+            label: "Autonomous System"
+            color: "#a0a0ff"
+          - name: InfraBGPSession
+            label: "BGP Session"
+            color: "#bfbf7f"
+          - name: InfraCircuit
+            label: "Circuit"
+            color: "#bf7fbf"
+          - name: IpamIPPrefix
+            label: "IP Prefix"
+            color: "#ffbf7f"
+          - name: InfraDevice
+            label: "Device"
+            color: "#7fbf7f"
+          - name: InfraInterface
+            label: "Interface"
+            color: "#7fbfbf"
+          - name: LocationSite
+            label: "Site"
+            color: "#7fbfff"
+      - name: attribute_name
+        kind: Text
+        optional: true
+        description: "Attribute on the hop node to compare. Omit to match by kind alone."
+        order_weight: 1100
+      - name: attribute_value
+        kind: Text
+        optional: true
+        description: "Expected attribute value as string. Booleans/ints normalized in the check."
+        order_weight: 1200
+      # Computed fingerprint — load-bearing for human_friendly_id and
+      # uniqueness_constraints, but the form already hides it (read_only)
+      # and the detail view shows it last (order_weight: 5000) so users
+      # see the fields they authored before the auto-derived identity.
+      - name: label
+        kind: Text
+        read_only: true
+        order_weight: 5000
+        description: "Auto-derived identity of the predicate."
+        computed_attribute:
+          kind: Jinja2
+          jinja2_template: "{{ polarity__value }}:{{ hop_kind__value }}:{{ attribute_name__value or '*' }}={{ attribute_value__value or '*' }}"
+    relationships:
+      - name: rule
+        peer: DemoReachabilityRule
+        cardinality: one
+        optional: false
+        kind: Parent
+        identifier: "demo_reachability_rule__constraints"
+        order_weight: 800

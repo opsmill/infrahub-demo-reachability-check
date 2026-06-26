@@ -1,0 +1,37 @@
+query PathCheck(
+  $source_id: String!
+  $destination_id: String!
+  $max_depth: Int
+  $max_paths: Int
+) {
+  InfrahubPathTraversal(
+    data: {
+      source_id: $source_id
+      destination_id: $destination_id
+      max_depth: $max_depth
+      max_paths: $max_paths
+      excluded_kinds: ["DemoReachabilityRule", "DemoReachabilityConstraint", "InfraPlatform"]
+    }
+  ) {
+    paths {
+      hops {
+        node {
+          id
+          kind
+          hfid
+          display_label
+        }
+      }
+      depth
+    }
+    source {
+      id
+      display_label
+    }
+    destination {
+      id
+      display_label
+    }
+    count
+  }
+}

@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/menu/latest.json
+#
+# Registered from .infrahub.yml via:
+#
+#   menus:
+#     - menus/reachability.yml
+#
+# Both DemoReachabilityRule and DemoReachabilityConstraint set
+# include_in_menu: false in schemas/reachability.yml so the auto-generated
+# top-level entries do not duplicate the items below.
+---
+apiVersion: infrahub.app/v1
+kind: Menu
+spec:
+  data:
+    # Constraints are children of a Rule (Component/Parent), so users
+    # author them from the rule's detail page. Surfacing them as a top-
+    # level browse item just clutters the sidebar.
+    - namespace: Demo
+      name: ReachabilityMenu
+      label: "Reachability Check"
+      icon: "mdi:check-network-outline"
+      kind: DemoReachabilityRule

@@ -1,0 +1,27 @@
+---
+schemas:
+  - schemas/reachability.yml
+
+menus:
+  - menus/reachability.yml
+
+queries:
+  - name: path_check
+    file_path: queries/path_check.gql
+
+# The check fans out over the reachability-rules group. The runner extracts
+# the listed path expressions from each member rule into self.params. The
+# rule_id lets the check fetch the rule node together with its constraint
+# children at run time.
+check_definitions:
+  - name: reachability_assertion
+    class_name: PathAssertionCheck
+    file_path: checks/path_assertion.py
+    targets: reachability-rules
+    parameters:
+      rule_id: "id"
+      source_id: "source__id"
+      destination_id: "destination__id"
+      max_depth: "max_depth__value"
+      max_paths: "max_paths__value"
+      enabled: "enabled__value"

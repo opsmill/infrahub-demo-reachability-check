@@ -1,0 +1,8 @@
+---
+apiVersion: infrahub.app/v1
+kind: Object
+spec:
+  kind: CoreStandardGroup
+  data:
+    - name: reachability-rules
+      description: "Members are DemoReachabilityRule nodes evaluated by the reachability check on every proposed change."
