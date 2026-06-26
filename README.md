@@ -10,6 +10,10 @@ Built on the Infrahub 1.10 surface: stored GraphQL queries,
 user-extended schema. No backend changes — copy this repo into your
 own Infrahub-controlled repo and register it.
 
+📺 **Watch the walkthrough:** [Reachability Check via Graph Traversal on YouTube](https://www.youtube.com/watch?v=guyEHTsqruI)
+— the video covers the same flow as the rest of this README, end to end,
+including the proposed-change verdict cards and the RBAC narrative.
+
 ---
 
 ## When / why teams need this
