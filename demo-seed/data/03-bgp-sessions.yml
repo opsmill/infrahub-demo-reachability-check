@@ -10,51 +10,27 @@ spec:
   kind: InfraBGPSession
   data:
     # Approved backbone (AS64496) — full mesh between atl1, jfk1, dfw1.
-    - local_device:
-        kind: InfraDevice
-        hfid: ["atl1-edge1"]
-      remote_device:
-        kind: InfraDevice
-        hfid: ["jfk1-edge1"]
-      remote_as:
-        kind: InfraAutonomousSystem
-        hfid: ["64496"]
+    - local_device: "atl1-edge1"
+      remote_device: "jfk1-edge1"
+      remote_as: "64496"
       description: "atl1-edge1 ↔ jfk1-edge1 via Duff (AS64496)."
 
-    - local_device:
-        kind: InfraDevice
-        hfid: ["atl1-edge1"]
-      remote_device:
-        kind: InfraDevice
-        hfid: ["dfw1-edge1"]
-      remote_as:
-        kind: InfraAutonomousSystem
-        hfid: ["64496"]
+    - local_device: "atl1-edge1"
+      remote_device: "dfw1-edge1"
+      remote_as: "64496"
       description: "atl1-edge1 ↔ dfw1-edge1 via Duff (AS64496)."
 
-    - local_device:
-        kind: InfraDevice
-        hfid: ["jfk1-edge1"]
-      remote_device:
-        kind: InfraDevice
-        hfid: ["dfw1-edge1"]
-      remote_as:
-        kind: InfraAutonomousSystem
-        hfid: ["64496"]
+    - local_device: "jfk1-edge1"
+      remote_device: "dfw1-edge1"
+      remote_as: "64496"
       description: "jfk1-edge1 ↔ dfw1-edge1 via Duff (AS64496)."
 
-    # Pre-existing Colt (AS8220) sessions on atl1 and jfk1 — already
-    # wired up but unused on `main` because every device's primary asn
-    # points to AS64496. The demo PC repoints atl1-edge1.asn to AS8220
-    # which surfaces a depth-3 atl1 -> AS8220 -> bgp_session -> jfk1
-    # path that the forbidden constraint rejects.
-    - local_device:
-        kind: InfraDevice
-        hfid: ["atl1-edge1"]
-      remote_device:
-        kind: InfraDevice
-        hfid: ["jfk1-edge1"]
-      remote_as:
-        kind: InfraAutonomousSystem
-        hfid: ["8220"]
+    # Pre-existing Colt (AS8220) session on atl1↔jfk1 — already wired
+    # up but unused on `main` because every device's primary asn points
+    # to AS64496. The demo PC repoints atl1-edge1.asn to AS8220 which
+    # surfaces a depth-3 atl1 -> AS8220 -> bgp_session -> jfk1 path
+    # that the forbidden constraint rejects.
+    - local_device: "atl1-edge1"
+      remote_device: "jfk1-edge1"
+      remote_as: "8220"
       description: "atl1-edge1 ↔ jfk1-edge1 via Colt (AS8220)."

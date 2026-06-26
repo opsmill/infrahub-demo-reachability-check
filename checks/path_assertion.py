@@ -36,12 +36,17 @@ DEFAULT_PUBLIC_URL = "http://localhost:8000"
 # Kinds excluded from the traversal. Without this, the rule node itself
 # (cardinality-one source and destination) becomes a 1-hop shortcut between
 # the endpoints and every reachability assertion collapses to a trivial
-# "the rule connects them" path. InfraPlatform is also excluded because
-# every device on the same vendor stack shares a platform node.
+# "the rule connects them" path.
+#
+# On the `main` branch this tuple also includes "InfraPlatform" because
+# every device on the same vendor stack would otherwise share a platform
+# node and the traversal would prefer that 2-hop shortcut. The demo
+# branch ships a minimal schema (no InfraPlatform) so we drop it here —
+# the GraphQL server rejects excluded_kinds that aren't in the loaded
+# schema.
 EXCLUDED_KINDS: tuple[str, ...] = (
     "DemoReachabilityRule",
     "DemoReachabilityConstraint",
-    "InfraPlatform",
 )
 
 
