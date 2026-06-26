@@ -10,3 +10,8 @@ docker-compose.override.yml
 .venv/
 *.egg-info/
 .uv-cache/
+
+# Single-branch bare clone used as the source of file:///srv/reachability
+# inside the docker-compose stack. Created by `uv run invoke demo.start`
+# (or `demo.prepare-repo-source`); should never be committed.
+.demo-bare/

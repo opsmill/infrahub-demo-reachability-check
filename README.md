@@ -298,6 +298,45 @@ Why this matters:
   constraint fingerprint) by editing the transform alone. No check
   change is required.
 
+### Why is `path_traversal_url` empty on my rules?
+
+A `TransformPython` computed attribute only fires after Infrahub has
+processed this repository's `.infrahub.yml`. That processing happens
+exclusively through a registered `CoreRepository`. If you have not yet
+registered this repository, the `path_traversal_url` attribute exists
+on the schema but stays `null` on every rule, and the check's verdict
+message has no `Inspect in UI:` line. You can confirm this in the
+GraphQL playground:
+
+```graphql
+{
+  CoreRepository { count }
+  CoreTransformPython(name__value: "path_traversal_url") { count }
+}
+```
+
+Both counts return `0` when no `CoreRepository` is registered.
+
+To populate the value, register the repository:
+
+1. Push this repository to a git remote the Infrahub task workers can
+   reach (a private or public GitHub or GitLab URL, a self-hosted
+   Gitea, or a `git daemon` service in your own docker-compose).
+2. In the Infrahub UI, navigate to **CoreRepository → + Add** (or use
+   `infrahubctl repository add` / the SDK) and supply the URL and the
+   branch you want Infrahub to track.
+3. The task workers clone the repository, parse `.infrahub.yml`, and
+   create the `CoreTransformPython`, `CoreGraphQLQuery`, and
+   `CoreCheckDefinition` objects. From this moment on, every rule
+   create or update fires the transform server-side and the
+   `path_traversal_url` attribute is populated.
+
+The `live-demo` branch of this repository ships a self-contained
+gitserver service in its `docker-compose.yml` and a
+`uv run invoke demo.register-repo` task that wires this up against
+the local stack with no external dependencies. See `DEMO.md` on that
+branch for the exact sequence.
+
 ## How to deploy this in your Infrahub
 
 The example references device hfids (such as `atl1-edge1`). Replace

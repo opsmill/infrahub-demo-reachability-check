@@ -28,12 +28,14 @@ from infrahub_sdk import Config, InfrahubClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# The reachability schema, menu, queries, transform, and check
+# definition are all installed automatically when the CoreRepository
+# is registered (see `uv run invoke demo.register-repo` and
+# .infrahub.yml). This script only loads the network schema (which is
+# specific to this demo and not in .infrahub.yml) and the seed data
+# that the rules will operate on.
 SCHEMAS = [
     "demo-seed/schemas/network.yml",
-    "schemas/reachability.yml",
-]
-MENUS = [
-    "menus/reachability.yml",
 ]
 DATA_FILES = [
     "demo-seed/data/01-asns.yml",
@@ -81,8 +83,6 @@ def _run(cmd: list[str]) -> None:
 def _load_schemas_and_data() -> None:
     for schema in SCHEMAS:
         _run(["infrahubctl", "schema", "load", schema])
-    for menu in MENUS:
-        _run(["infrahubctl", "menu", "load", menu])
     for data in DATA_FILES:
         _run(["infrahubctl", "object", "load", data])
 

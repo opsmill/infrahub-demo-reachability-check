@@ -343,7 +343,23 @@ services:
       INFRAHUB_TIMEOUT: ${INFRAHUB_TIMEOUT:-60}
       INFRAHUB_WORKFLOW_PORT: ${INFRAHUB_WORKFLOW_PORT:-4200}
       PREFECT_API_URL: http://${INFRAHUB_WORKFLOW_ADDRESS:-task-manager}:${INFRAHUB_WORKFLOW_PORT:-4200}/api
+      # Git inside the worker needs an explicit opt-in to clone via
+      # file:// URLs. The live-demo registers this repository as a
+      # CoreRepository with location=file:///srv/reachability so the
+      # path_traversal_url Python transform can install without any
+      # external git infrastructure.
+      GIT_ALLOW_PROTOCOL: ${GIT_ALLOW_PROTOCOL:-file:https:http:ssh:git}
     tty: true
+    # Read-only bind mount of a single-branch bare clone of this
+    # repository. The CoreRepository registration uses
+    # location=file:///srv/reachability so the worker clones from this
+    # path instead of any remote URL. The bare clone is created by
+    # `uv run invoke demo.prepare-repo-source` (and as a pre-step of
+    # `demo.start`) and contains only the live-demo branch, so the
+    # Infrahub main branch maps cleanly onto it with no extra git
+    # branches the worker would otherwise try to track.
+    volumes:
+      - "./.demo-bare:/srv/reachability:ro"
 
 volumes:
   database_data:

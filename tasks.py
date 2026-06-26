@@ -3,18 +3,21 @@
 Run with `uv run invoke <task>`. Verbs mirror Infrahub's own
 `dev.start` / `dev.init` convention so the muscle memory transfers:
 
-  uv run invoke demo.start    # docker compose up + wait for healthy
-  uv run invoke demo.init     # load schema + data + create rules
-  uv run invoke demo.up       # start + init in one go
-  uv run invoke demo.status   # ping the running stack
-  uv run invoke demo.logs     # tail infrahub-server logs
-  uv run invoke demo.stop     # docker compose down (preserves volumes)
-  uv run invoke demo.reset    # docker compose down -v (wipes everything)
+  uv run invoke demo.start          # prepare bare clone + docker compose up + wait healthy
+  uv run invoke demo.register-repo  # register the CoreRepository so the Python transform installs
+  uv run invoke demo.init           # load network schema + data + create rules
+  uv run invoke demo.up             # start + register-repo + init in one go
+  uv run invoke demo.status         # ping the running stack
+  uv run invoke demo.logs           # tail infrahub-server logs
+  uv run invoke demo.stop           # docker compose down (preserves volumes)
+  uv run invoke demo.reset          # docker compose down -v (wipes everything)
 """
 
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -25,6 +28,8 @@ from invoke.collection import Collection
 from invoke.tasks import task
 
 ROOT = Path(__file__).resolve().parent
+BARE_REPO_PATH = ROOT / ".demo-bare"
+SERVED_BRANCH = "live-demo"
 
 # Defaults match docker-compose.yml + .env. The local-only
 # docker-compose.override.yml can remap the host port; the tasks honor
@@ -41,9 +46,57 @@ def _docker_env() -> dict[str, str]:
     return env
 
 
+def _prepare_bare_clone() -> None:
+    """(Re)create the single-branch bare clone that backs file:///srv/reachability.
+
+    Infrahub task workers see this directory through the read-only bind
+    mount declared on the ``task-worker`` service. Cloning just the
+    ``live-demo`` branch keeps the worker from trying to track any other
+    git branches that exist in the host repository (and from raising
+    "Unable to identify the worktree for the branch" when it cannot find
+    a matching Infrahub branch).
+    """
+    if BARE_REPO_PATH.exists():
+        shutil.rmtree(BARE_REPO_PATH)
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "--bare",
+            "--single-branch",
+            "--branch",
+            SERVED_BRANCH,
+            str(ROOT),
+            str(BARE_REPO_PATH),
+        ],
+        check=True,
+    )
+    # Make the bare repo's HEAD point at live-demo so the Infrahub
+    # worker's clone defaults to it without needing an extra --ref hint.
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(BARE_REPO_PATH),
+            "symbolic-ref",
+            "HEAD",
+            f"refs/heads/{SERVED_BRANCH}",
+        ],
+        check=True,
+    )
+
+
+@task
+def prepare_repo_source(c):
+    """Build the single-branch bare clone consumed by the task-worker bind mount."""
+    _prepare_bare_clone()
+    print(f"Bare clone at {BARE_REPO_PATH} now exposes only the {SERVED_BRANCH} branch.")
+
+
 @task(help={"wait": "Wait until infrahub-server returns 200 on /api/config."})
 def start(c, wait=True):
     """Bring the Infrahub 1.10 stack up."""
+    _prepare_bare_clone()
     c.run("docker compose up -d", pty=False, env=_docker_env())
     if not wait:
         return
@@ -96,6 +149,27 @@ def logs(c, service="infrahub-server", tail=200, follow=False):
     "address": "Override INFRAHUB_ADDRESS (default: http://localhost:<port>).",
     "token": "Override INFRAHUB_API_TOKEN (default: admin token from .env).",
 })
+def register_repo(c, address=None, token=None):
+    """Register this branch as a CoreRepository.
+
+    Required for the path_traversal_url Python transform to install
+    on the running stack. The gitserver container in docker-compose
+    serves this repository read-only on git://gitserver/reachability;
+    this task points a CoreRepository at it and waits for the worker
+    to finish parsing .infrahub.yml.
+    """
+    env = _docker_env()
+    if address:
+        env["INFRAHUB_ADDRESS"] = address
+    if token:
+        env["INFRAHUB_API_TOKEN"] = token
+    c.run("uv run python demo-seed/register_repo.py", pty=False, env=env)
+
+
+@task(help={
+    "address": "Override INFRAHUB_ADDRESS (default: http://localhost:<port>).",
+    "token": "Override INFRAHUB_API_TOKEN (default: admin token from .env).",
+})
 def init(c, address=None, token=None):
     """Load network + reachability schemas, seed data, create rules."""
     env = _docker_env()
@@ -106,17 +180,19 @@ def init(c, address=None, token=None):
     c.run("uv run python demo-seed/setup.py", pty=False, env=env)
 
 
-@task(pre=[start, init])
+@task(pre=[start, register_repo, init])
 def up(c):
-    """Convenience: start + init in one go."""
+    """Convenience: start + register-repo + init in one go."""
 
 
 demo = Collection("demo")
+demo.add_task(prepare_repo_source, name="prepare-repo-source")
 demo.add_task(start)
 demo.add_task(stop)
 demo.add_task(reset)
 demo.add_task(status)
 demo.add_task(logs)
+demo.add_task(register_repo, name="register-repo")
 demo.add_task(init)
 demo.add_task(up)
 
