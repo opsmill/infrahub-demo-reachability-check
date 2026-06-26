@@ -171,7 +171,7 @@ sequenceDiagram
     participant PC as Proposed Change<br/>pipeline
     participant Fan as targets: fan-out<br/>(per CoreCheckDefinition)
     participant Check as PathAssertionCheck<br/>(this example)
-    participant GQL as InfrahubPathTraversal<br/>(stored query path_check.gql)
+    participant GQL as InfrahubPathTraversal<br/>(client.traverse_paths, SDK 1.22)
     participant Verdict as CoreUserValidator<br/>+ CoreStandardCheck
     participant UI as Verdict UI card
 
@@ -179,13 +179,13 @@ sequenceDiagram
     PC->>Fan: Trigger user checks on each repository
     Note over Fan: Load CoreStandardGroup("reachability-rules")
     loop For each TopologyReachabilityRule in the group
-        Fan->>Fan: member.extract(parameters)<br/>{rule_id, source_id, destination_id,<br/>max_depth, max_paths, enabled}
-        Fan->>Check: run_user_check(params)
-        Check->>GQL: collect_data → path_check<br/>(variables = self.params)
-        GQL-->>Check: paths[], source, destination
-        Check->>Check: client.get(TopologyReachabilityRule,<br/>include=["constraints"])
+        Fan->>Fan: member.extract({rule_id})
+        Fan->>Check: run_user_check(rule_id)
+        Check->>Check: client.get(TopologyReachabilityRule, rule_id,<br/>include=["constraints"])
+        Check->>GQL: client.traverse_paths(source, destination,<br/>max_depth, max_paths, excluded_kinds)
+        GQL-->>Check: PathTraversalResult: paths[], source, destination
         Check->>Check: evaluate every path against<br/>required / forbidden / any_of
-        Check->>Verdict: log_entries (incl. "Inspect in UI: <url>"),<br/>conclusion, severity
+        Check->>Verdict: log_entries (incl. rule.path_traversal_url),<br/>conclusion, severity
     end
     Verdict-->>UI: validator aggregates per-rule cards
     UI-->>User: PASS / FAIL card per rule<br/>(URL is clickable in the message body)
@@ -248,6 +248,12 @@ A constraint matches a hop when `hop["kind"] == hop_kind`. If
 
 ## Repository layout
 
+This repository is a **drop-in pattern**. It ships the schema, check,
+transform, queries, and menu, and nothing else. Adopters supply their
+own `reachability-rules` `CoreStandardGroup` and their own rule and
+constraint instances through the Infrahub UI, the SDK, or their own
+data-loader YAML.
+
 ```text
 reachability_check/
   .infrahub.yml                       # registers schema, query, check, menu, transform
@@ -258,10 +264,6 @@ reachability_check/
   queries/rule_url.gql                # fetches rule data for the URL transform
   transforms/path_traversal_url.py    # Python computed-attribute transform (server-side)
   checks/path_assertion.py            # PathAssertionCheck
-  data/group.yml                      # the reachability-rules group
-  data/rules.yml                      # rule instances (source/destination by hfid)
-  data/constraints.yml                # per-rule hop predicates
-  scripts/bootstrap.py                # resolves hfids → UUIDs and creates rules/constraints
 ```
 
 ## Click-through URL: a Python computed attribute
@@ -288,12 +290,24 @@ and update the value. The check reads it directly from the rule
 (`rule.path_traversal_url.value`) when building the verdict log line.
 There is no URL construction inside the check itself.
 
+The transform returns a **relative URL** of the form
+`/path-traversal?source=...&destination=...`. The Infrahub UI
+resolves it against the current page, so the same value works on a
+local `http://localhost:8000` stack, on a production
+`https://infrahub.your-company.com` deployment, and on any other
+host without any environment-variable configuration. The value is
+also noticeably shorter than the equivalent absolute URL, which
+matters because it renders on the rule detail page and in every
+verdict log message.
+
 Why this matters:
 
 - **One source of truth** for the URL. The UI sees the same string the
   check emits.
 - **Branch-aware**: on a branch with a tightened `max_depth`, the URL
   reflects the branch value automatically.
+- **Host-agnostic**: relative URL, no env-var to keep in sync with
+  the actual deployment URL.
 - **Easier to extend**: add a new query parameter (for example, a
   constraint fingerprint) by editing the transform alone. No check
   change is required.
@@ -321,54 +335,73 @@ To populate the value, register the repository:
 
 1. Push this repository to a git remote the Infrahub task workers can
    reach (a private or public GitHub or GitLab URL, a self-hosted
-   Gitea, or a `git daemon` service in your own docker-compose).
-2. In the Infrahub UI, navigate to **CoreRepository → + Add** (or use
-   `infrahubctl repository add` / the SDK) and supply the URL and the
-   branch you want Infrahub to track.
+   Gitea, or any other git server). A `file://` URL pointing at a path
+   that is bind-mounted into the worker container is also valid; see
+   the `live-demo` branch for a working example.
+2. Run `infrahubctl repository add reachability-check <URL>` (the SDK
+   and UI offer the same operation). Optionally pass `--ref <branch>`
+   if you do not want the worker to track the repository's default
+   branch.
 3. The task workers clone the repository, parse `.infrahub.yml`, and
    create the `CoreTransformPython`, `CoreGraphQLQuery`, and
    `CoreCheckDefinition` objects. From this moment on, every rule
    create or update fires the transform server-side and the
    `path_traversal_url` attribute is populated.
 
-The `live-demo` branch of this repository ships a self-contained
-gitserver service in its `docker-compose.yml` and a
-`uv run invoke demo.register-repo` task that wires this up against
-the local stack with no external dependencies. See `DEMO.md` on that
-branch for the exact sequence.
+The `live-demo` branch automates all of this against a local docker
+stack. It bind-mounts a single-branch bare clone of the repository
+into the task-worker container and runs `infrahubctl repository add
+reachability-check file:///srv/reachability` from a
+`uv run invoke demo.register-repo` task. No external git host is
+required. See `DEMO.md` on that branch for the exact sequence.
 
 ## How to deploy this in your Infrahub
 
-The example references device hfids (such as `atl1-edge1`). Replace
-them with hfids that exist in your instance. The kinds themselves can
-also be changed; the schema accepts any peer.
+The pattern is shipped as a drop-in repository. There is no seed
+data, no bootstrap script, and no demo content on this branch. Three
+steps stand between a fresh Infrahub instance and a working
+reachability check:
 
-```bash
-# 1. Add this repo to your Infrahub-controlled git repository (either
-#    drop the files into an existing CoreRepository, or register this
-#    repo URL as a new CoreRepository in the Infrahub UI). On every
-#    commit, .infrahub.yml is re-loaded: schema, query, check, menu.
+1. **Drop the files into an Infrahub-controlled git repository.** Add
+   the contents of this branch to an existing `CoreRepository` you
+   already track, or push the branch to a new git URL and register it
+   via the Infrahub UI (**Object Management → CoreRepository → + Add**)
+   or `infrahubctl repository add <name> <url>`. On every commit,
+   `.infrahub.yml` is re-loaded and Infrahub creates / updates the
+   schema, menu, queries, transform, and check definition.
 
-# 2. Load the group and (templated) rules/constraints, OR run the
-#    bootstrap script which resolves hfids → UUIDs and creates the
-#    rules + constraints via the SDK:
-infrahubctl object load data/group.yml
-INFRAHUB_ADDRESS=... INFRAHUB_API_TOKEN=... \
-    uv run python scripts/bootstrap.py
+2. **Create the `reachability-rules` `CoreStandardGroup`.** The
+   `CoreCheckDefinition` references this group as its `targets:`. The
+   check fans out one verdict per member rule on every proposed
+   change. Create it once, through the UI
+   (**CoreStandardGroup → + Add**) or programmatically through the
+   SDK:
 
-# 3. Open a proposed change. The check fires once per rule and reports
-#    PASS / FAIL with the actual paths in the verdict message.
-```
+   ```python
+   await client.create(kind="CoreStandardGroup", name="reachability-rules").save()
+   ```
+
+3. **Author your `TopologyReachabilityRule` instances** and add each
+   one to the `reachability-rules` group. The rule's `source` and
+   `destination` accept any node kind in your graph; the
+   `constraints` relationship attaches the per-rule predicates
+   (required, forbidden, any-of). Author them through the UI, the
+   SDK, or `infrahubctl object load`.
+
+Once the group exists and at least one rule is a member of it, every
+proposed change runs the check, produces a PASS or FAIL verdict per
+rule, and emits the `Inspect in UI:` link from the rule's
+`path_traversal_url` computed attribute.
 
 ### Tune the excluded kinds for your schema
 
-`queries/path_check.gql` hard-codes
-`excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint", "InfraPlatform"]`.
+The repository ships with a minimal default:
+`excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint"]`.
 This list controls **which node kinds the traversal will refuse to walk
 through as hops**. Getting it right matters more than it looks at
 first glance.
 
-Why the defaults are what they are:
+Why these two are excluded by default:
 
 - `TopologyReachabilityRule`. Every rule has cardinality-one
   relationships to its `source` and `destination`. Without this
@@ -377,47 +410,47 @@ Why the defaults are what they are:
   collapses to a trivial "the rule connects them" path.
 - `TopologyReachabilityConstraint`. Children of the rule. Excluded
   for the same reason.
-- `InfraPlatform`. In the standard `models/base` schemas, every
-  device on the same vendor stack shares a platform node, so the
-  traversal would prefer a two-hop `device → InfraPlatform → device`
-  shortcut over the real network path. Drop this if you do not have
-  `InfraPlatform` in your schema (Infrahub 1.10 rejects unknown
-  `excluded_kinds` values with
-  `excluded_kinds kind '<X>' not in schema`).
 
-You will almost certainly need to **tune this list for your topology**.
-Two common situations:
+**You will almost certainly need to extend this list for your
+topology.** The Infrahub GraphQL server rejects `excluded_kinds`
+values that are not in the loaded schema, so the defaults stay
+minimal; you add the shortcut kinds your schema actually has.
 
-- **A kind in the default list does not exist in your schema.** Remove
-  it, or the GraphQL call will fail outright. The `live-demo` branch
-  ships a minimal schema and drops `InfraPlatform` for exactly this
-  reason.
-- **Your topology has its own "shortcut" kinds.** Anything that
-  cardinality-many-relates a large fraction of nodes (e.g. a shared
-  `Organization`, `Tag`, `Site`, `Tenant`, or a global `Vendor` node)
-  will cause the traversal to prefer a short artificial path through
-  it instead of the real network hops you want to assert on. Add those
-  kinds to `excluded_kinds`.
+The single most common extension for the standard `models/base`
+schemas is `InfraPlatform`. Every device on the same vendor stack
+shares a platform node, so without excluding it the traversal would
+prefer a two-hop `device → InfraPlatform → device` shortcut over
+the real network path. Other typical "shortcut" kinds you may want
+to exclude in your fork: a shared `Organization`, `Tag`, `Site`,
+`Tenant`, or a global `Vendor` node. Anything that
+cardinality-many-relates a large slice of the graph belongs on the
+list.
 
-When in doubt, open a path between two endpoints directly in
-`/path-traversal`, look at what shows up in the depth-1 and depth-2
-results, and exclude any kind that does not represent a real hop in
-your domain.
+When in doubt, open `/path-traversal` between two endpoints
+directly, look at what shows up in the depth-1 and depth-2 results,
+and exclude any kind that does not represent a real hop in your
+domain.
 
-If you change the namespace or rename the kinds, update **three**
-places in lock-step:
+Three places stay in lock-step. Update all three together when you
+extend the list (or when you rename the rule or constraint kinds in
+your fork):
 
-1. `excluded_kinds` array in `queries/path_check.gql` (what the check evaluates)
-2. `EXCLUDED_KINDS` tuple in `transforms/path_traversal_url.py` (what the verdict URL points at)
-3. `kind:` strings in `schemas/reachability.yml`, `data/*.yml`, and the
-   `class PathAssertionCheck` references
+1. `excluded_kinds` array in `queries/path_check.gql` (the stored
+   query, kept for the `CoreCheckDefinition` `query` attribute even
+   though the check itself uses `traverse_paths`).
+2. `EXCLUDED_KINDS` tuple in `transforms/path_traversal_url.py`
+   (what the verdict URL points at).
+3. `EXCLUDED_KINDS` tuple in `checks/path_assertion.py` (what the
+   check actually passes to `client.traverse_paths()`).
 
 ## Honest limitations
 
-- **Stored `.gql` is mandatory** on the `main` branch pattern. Infrahub's
-  repo sync resolves the check's `query` attribute against a registered
-  `CoreGraphQLQuery`. (The `live-demo` branch of this repo shows an
-  alternative using the SDK 1.22 `traverse_paths()` API directly.)
+- **SDK 1.22 or later is required.** The check uses
+  `InfrahubClient.traverse_paths()`, added in SDK 1.22, instead of
+  executing the stored `path_check.gql` query directly. The stored
+  query stays registered (the `CoreCheckDefinition` requires a
+  `query`) but is never executed; the SDK helper builds its own
+  GraphQL call.
 - **No "what-if" preview outside a proposed change.** The check fires
   inside the proposed-change pipeline. To explore a path on a branch
   interactively, query `InfrahubPathTraversal` directly from the GraphQL
