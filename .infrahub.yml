@@ -20,10 +20,13 @@ python_transforms:
     class_name: PathTraversalUrl
     file_path: transforms/path_traversal_url.py
 
-# The check fans out over the reachability-rules group. The runner extracts
-# the listed path expressions from each member rule into self.params. The
-# rule_id lets the check fetch the rule node together with its constraint
-# children at run time.
+# The check fans out over the reachability-rules group. The only
+# parameter extracted from each member is the rule id; the check then
+# fetches the rule together with its constraint children from the SDK
+# and reads everything else (source, destination, max_depth, max_paths,
+# enabled) directly off the rule node. This keeps the .infrahub.yml
+# parameter mapping minimal and makes the check the single source of
+# truth for what each rule means.
 check_definitions:
   - name: reachability_assertion
     class_name: PathAssertionCheck
@@ -31,8 +34,3 @@ check_definitions:
     targets: reachability-rules
     parameters:
       rule_id: "id"
-      source_id: "source__id"
-      destination_id: "destination__id"
-      max_depth: "max_depth__value"
-      max_paths: "max_paths__value"
-      enabled: "enabled__value"

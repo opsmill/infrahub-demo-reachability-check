@@ -1,10 +1,12 @@
 """Reachability path-assertion check.
 
-Each member of the targeted group is a TopologyReachabilityRule node. The runner
-fans out one invocation per member and resolves the per-rule path expressions
-declared in .infrahub.yml into self.params. This check then loads the rule
-with its constraint children and evaluates each path returned by
-InfrahubPathTraversal against the required / forbidden / any_of constraints.
+Each member of the targeted group is a TopologyReachabilityRule node. The
+runner fans the check out per group member and resolves only the rule id
+from each member into ``self.params``. The check then fetches the rule
+(with its constraint children) and reads everything else it needs.
+source, destination, max_depth, max_paths, enabled, directly from the rule
+node. This keeps the .infrahub.yml parameter mapping minimal and makes the
+check the single source of truth for what each rule means.
 """
 
 from __future__ import annotations
@@ -15,14 +17,14 @@ from typing import Any
 
 from infrahub_sdk.checks import InfrahubCheck
 
-GRAPHQL_VARS = ("source_id", "destination_id", "max_depth", "max_paths")
 FALSEY_STRINGS = frozenset({"false", "no", "0", "off"})
 
 
 def _is_disabled(value: Any) -> bool:
-    """`enabled` survives both Python `False` (from `member.extract`) and string
-    forms (from `infrahubctl check key=value`). Treat anything falsy-looking
-    as disabled; otherwise default to enabled.
+    """Treat anything falsy-looking as disabled. The ``enabled`` field is a
+    Boolean attribute on the rule, but the check can also be invoked via
+    ``infrahubctl check key=value`` where it arrives as a string. Both forms
+    are handled.
     """
     if value is False:
         return True
@@ -34,8 +36,9 @@ def _is_disabled(value: Any) -> bool:
 def _normalize(value: Any) -> str:
     """Stringify for hop-attribute comparison.
 
-    Booleans render lower-case so a Text attribute_value of "true"/"false"
-    matches a Python bool. Everything else uses plain str().
+    Booleans render lower-case so a Text ``attribute_value`` of
+    ``"true"`` / ``"false"`` matches a Python bool. Everything else uses
+    plain ``str()``.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -46,13 +49,38 @@ class PathAssertionCheck(InfrahubCheck):
     query = "path_check"
     timeout = 120
 
+    # The check fetches the rule once in collect_data and stashes it here
+    # so validate() can use it without a second round trip.
+    _rule: Any | None = None
+
     async def collect_data(self) -> dict:
-        source_id = self.params.get("source_id")
-        destination_id = self.params.get("destination_id")
+        rule_id = self.params.get("rule_id")
+        if not rule_id:
+            return {"_no_rule_id": True}
+
+        rule = await self.client.get(
+            kind="TopologyReachabilityRule",
+            id=rule_id,
+            branch=self.branch_name,
+            include=["constraints"],
+            prefetch_relationships=True,
+        )
+        self._rule = rule
+
+        if _is_disabled(rule.enabled.value):
+            return {"_disabled": True}
+
+        source_id = rule.source.id
+        destination_id = rule.destination.id
         if source_id and source_id == destination_id:
             return {"_self_loop": True}
 
-        variables = {key: self.params[key] for key in GRAPHQL_VARS if key in self.params}
+        variables = {
+            "source_id": source_id,
+            "destination_id": destination_id,
+            "max_depth": rule.max_depth.value,
+            "max_paths": rule.max_paths.value,
+        }
         return await self.client.query_gql_query(
             name=self.query,
             branch_name=self.branch_name,
@@ -61,7 +89,7 @@ class PathAssertionCheck(InfrahubCheck):
 
     @staticmethod
     def _rule_url(rule: Any) -> str | None:
-        """Pull the rule's computed `path_traversal_url` value, if any.
+        """Return the rule's computed ``path_traversal_url`` value, if any.
 
         The URL is built server-side by the ``path_traversal_url`` Python
         transform (see ``transforms/path_traversal_url.py``) and stored on
@@ -76,35 +104,32 @@ class PathAssertionCheck(InfrahubCheck):
         return str(value)
 
     async def validate(self, data: dict) -> None:
-        if _is_disabled(self.params.get("enabled")):
+        if data.get("_no_rule_id"):
+            self.log_error(message="Rule id was not extracted into params; cannot load rule.")
+            return
+
+        if data.get("_disabled"):
             self.log_info(message="Rule is disabled; skipping evaluation.")
             return
 
         if data.get("_self_loop"):
             self.log_error(
-                message="Rule source and destination resolve to the same node — assertion is ill-defined.",
+                message="Rule source and destination resolve to the same node; assertion is ill-defined.",
             )
             return
 
-        rule_id = self.params.get("rule_id")
-        if not rule_id:
-            self.log_error(message="Rule id was not extracted into params; cannot load constraints.")
+        rule = self._rule
+        if rule is None:
+            self.log_error(message="Rule was not loaded; cannot evaluate constraints.")
             return
 
-        rule = await self.client.get(
-            kind="TopologyReachabilityRule",
-            id=rule_id,
-            branch=self.branch_name,
-            include=["constraints"],
-            prefetch_relationships=True,
-        )
         constraints = [related.peer for related in rule.constraints.peers]
 
         result = data.get("InfrahubPathTraversal") or {}
         paths = result.get("paths") or []
-        source_label = (result.get("source") or {}).get("display_label") or self.params.get("source_id")
-        dest_label = (result.get("destination") or {}).get("display_label") or self.params.get("destination_id")
-        max_depth = self.params.get("max_depth", 8)
+        source_label = (result.get("source") or {}).get("display_label") or getattr(rule.source, "display_label", None)
+        dest_label = (result.get("destination") or {}).get("display_label") or getattr(rule.destination, "display_label", None)
+        max_depth = rule.max_depth.value
         url = self._rule_url(rule)
         url_block = f"\n\nInspect in UI:\n{url}" if url else ""
 
@@ -129,10 +154,11 @@ class PathAssertionCheck(InfrahubCheck):
         forbidden = [c for c in constraints if c.polarity.value == "forbidden"]
         any_of = [c for c in constraints if c.polarity.value == "any_of"]
 
-        # `forbidden` is a global invariant — a single offending hop on any
-        # returned path fails the check, even if other paths satisfy required.
-        # `required` and `any_of` keep existence semantics: at least one path
-        # must include all required hops and at least one any_of option.
+        # ``forbidden`` is a global invariant: a single offending hop on any
+        # returned path fails the check, even if other paths satisfy
+        # required. ``required`` and ``any_of`` keep existence semantics: at
+        # least one path must include all required hops and at least one
+        # any_of option.
         forbidden_hits: list[str] = []
         requirement_violations: list[str] = []
         valid_count = 0
@@ -170,7 +196,7 @@ class PathAssertionCheck(InfrahubCheck):
         self.log_info(
             message=(
                 f"{valid_count}/{len(paths)} paths satisfy all constraints "
-                f"(cap: max_paths={self.params.get('max_paths')}).{url_block}"
+                f"(cap: max_paths={rule.max_paths.value}).{url_block}"
             ),
         )
 
