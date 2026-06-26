@@ -275,7 +275,7 @@ as a `python_transform` and wired into the schema with:
 
 ```yaml
 - name: path_traversal_url
-  kind: Text
+  kind: URL
   read_only: true
   computed_attribute:
     kind: TransformPython

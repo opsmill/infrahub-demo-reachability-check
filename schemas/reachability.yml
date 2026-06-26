@@ -36,13 +36,16 @@ nodes:
         kind: Boolean
         default_value: true
         order_weight: 2400
-      # Server-side computed attribute — a Python transform builds the
+      # Server-side computed attribute. A Python transform builds the
       # click-through URL to the path-traversal page using the rule's
-      # source/destination/depth/maxPaths and the canonical EXCLUDED_KINDS.
-      # The check reads this value at evaluation time instead of building
-      # the URL itself.
+      # source / destination / depth / maxPaths and the canonical
+      # EXCLUDED_KINDS list. The attribute kind is ``URL`` so the
+      # Infrahub UI renders the value as a clickable hyperlink on the
+      # rule detail page. The check reads ``.value`` (the raw string)
+      # at evaluation time, exactly as it would for a Text attribute,
+      # and embeds it in the verdict log message.
       - name: path_traversal_url
-        kind: Text
+        kind: URL
         read_only: true
         optional: true
         order_weight: 5000
