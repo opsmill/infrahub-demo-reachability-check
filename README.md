@@ -10,52 +10,45 @@ rule and a one-click view of exactly where a "no" would happen.
 
 ## Why should I care?
 
-Most organizations rely on rules that live only in senior people's
-heads — *"customer traffic must never bypass the inspection layer"*,
-*"EU data must stay in the EU"*, *"the audit data store is never
-reachable from the guest network"*. When a change quietly breaks one
-of those rules, the failure shows up late: a midnight outage, a
-failed audit, a regulator letter, a customer call. This pattern
-catches it at review time instead — before anyone hits "merge" — so
-the rule survives staff turnover and stays current as the business
-grows.
+Most organizations carry these rules only in senior people's heads —
+*"customer traffic must never bypass the inspection layer"*, *"EU
+data must stay in the EU"*, *"the audit data store is never reachable
+from the guest network"*. When a change quietly breaks one, the
+failure shows up late: a midnight outage, a failed audit, a regulator
+letter, a customer call. This pattern catches it at review time,
+before anyone hits "merge" — so the rule survives staff turnover and
+stays current as the business grows.
 
 **Reachability is a topology notation, not a network-only idea.** Any
-time your source of truth is a graph (network topology, regulatory
-scope boundaries, security zones, agent delegation chains, service
-dependencies, link capacity), the question "does *X* reach *Y*
-subject to these constraints?" has the same shape. This repository
-turns that question into a first-class Infrahub object, evaluated on
-every proposed change.
+graph source of truth — network topology, regulatory scope, security
+zones, agent delegation, service dependencies, capacity — admits the
+question *"does X reach Y subject to these constraints?"* This
+repository makes that question a first-class Infrahub object,
+evaluated on every proposed change.
 
 📺 **Walkthrough video:** [Reachability Check via Graph Traversal on YouTube](https://www.youtube.com/watch?v=guyEHTsqruI).
 
 > **Where this came from.** Infrahub 1.10 introduced path traversal
-> at AutoCon. The audience reception was strong, and the follow-up
-> questions were uniformly *"can this also be used for impact
-> assessment? firewall compliance? maintenance drain scenarios?
-> physical and logical topology evaluation?"* The answer is yes,
-> every one of them, with the primitives Infrahub already ships.
-> This repository is the worked example.
+> at AutoCon. The follow-up questions were uniformly *"can this also
+> be used for impact assessment? firewall compliance? maintenance
+> drain?"* The answer is yes, every one of them — with primitives
+> Infrahub already ships. This repository is the worked example.
 
-> **Works in Infrahub today, with no product changes.** The schema,
-> check, transform, stored query, and menu in this repository are
-> user content. The path-traversal engine, the proposed-change
-> pipeline, role-based object permissions, and computed attributes
-> are the existing Infrahub 1.10 surface. There is nothing to fork,
-> patch, or wait for.
+> **Works in Infrahub today, no product changes.** The schema, check,
+> transform, query, and menu in this repository are user content. The
+> path-traversal engine, proposed-change pipeline, object permissions,
+> and computed attributes are the existing Infrahub 1.10 surface.
+> Nothing to fork, patch, or wait for.
 
 **Where to go from here:**
 
-- *Just want to run it?* Switch to the [`live-demo`](../../tree/live-demo)
-  branch and follow [`QUICKSTART.md`](../../tree/live-demo/QUICKSTART.md).
-  One command brings up Infrahub 1.10 with the pattern installed and
-  three preloaded proposed changes ready to inspect.
-- *Want to deploy it in your own Infrahub?* See
-  [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the full
-  technical reference: schema, check, transform, sequence diagrams,
-  RBAC recipe, deployment steps.
-- *Want to understand the value first?* Read the rest of this page.
+- *Just want to run it?* Switch to [`live-demo`](../../tree/live-demo)
+  and follow [`QUICKSTART.md`](../../tree/live-demo/QUICKSTART.md).
+  One command brings up Infrahub 1.10 with three preloaded proposed
+  changes to inspect.
+- *Want to deploy it yourself?* See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)
+  for schema, check, transform, sequence diagrams, RBAC, deployment.
+- *Want to understand the value first?* Read on.
 
 ---
 
@@ -64,7 +57,7 @@ every proposed change.
 ### What teams are trying to do
 
 A rule of the form *source → destination + hop predicates* expresses
-a wide family of operational questions. Some examples:
+a wide family of operational questions:
 
 | Domain                       | Concrete question the rule asserts                                                |
 | ---------------------------- | --------------------------------------------------------------------------------- |
@@ -78,33 +71,28 @@ a wide family of operational questions. Some examples:
 | **AI agent capability delegation** | "An untrusted agent cannot reach a privileged tool (payment, prod-deploy, file-write) through any MCP/A2A delegation chain." |
 | **Continuous compliance audits** | "Every rule, every proposed change, with a full diffable history." |
 
-All of these are the same notation pointed at different parts of the
-graph. Only the source kind, destination kind, and hop predicates
-change. The rest of the machinery is shared.
-
 ### Why it is hard today
 
-In the standard network-automation playbook, checking an invariant
-like *"Atlanta-to-NYC must transit AS64496 and never AS8220"* means
-writing a Python script that re-derives the topology from flat tables
-on every run: fetch every device, every interface, every BGP session,
-every prefix; rebuild the adjacency in memory; iterate over every
-source / destination / path permutation; apply the rule to each. You
-are reconstructing the graph in code, by hand, with no help from the
-system that already holds it — and the moment the schema grows or a
-new device kind appears, the script silently stops covering cases.
+In the standard network-automation playbook, an invariant like
+*"Atlanta-to-NYC must transit AS64496 and never AS8220"* is enforced
+by a Python script that re-derives the topology from flat tables on
+every run: fetch devices, interfaces, BGP sessions, prefixes; rebuild
+adjacency in memory; iterate every source / destination / path
+permutation; apply the rule. You reconstruct the graph in code, by
+hand, with no help from the system that already holds it — and the
+moment the schema grows or a new device kind appears, the script
+silently stops covering cases.
 
-A graph source of truth changes the cost equation. The relationships
-between devices, sessions, zones, and tenants are already first-class
-edges in the database. *"Which paths exist between A and B subject to
-these constraints?"* becomes a traversal query, not a nested loop;
-the engine walks the graph, the rule declares the predicate, and
-nothing has to enumerate permutations in user code. A script cannot
-ask that question without re-deriving the graph; the graph can answer
-it natively.
+A graph source of truth flips this. Relationships between devices,
+sessions, zones, and tenants are first-class edges; *"which paths
+exist between A and B subject to these constraints?"* becomes a
+traversal query, not a nested loop. The engine walks the graph, the
+rule declares the predicate, no user code enumerates permutations. A
+script cannot ask that question without re-deriving the graph; the
+graph answers it natively.
 
-Without that — even when the data is sound — the invariants live in
-people, not in the system:
+Without that — even with sound data — the invariants live in people,
+not in the system:
 
 - **Slack threads and tribal knowledge.** A senior engineer eyeballs
   the diff and remembers the rule. The newer engineer does not even
@@ -117,123 +105,88 @@ people, not in the system:
 - **Diagrams in Confluence.** Out of date the day after they are
   drawn, disconnected from the data that drives the deployment.
 
-The common failure mode is the same: the invariant is not authored
-where the change is reviewed, and the verification logic is
-re-implemented from flat data every time. By the time anyone
-notices, the change is in.
+The failure mode: the invariant is not authored where the change is
+reviewed, and verification logic is re-implemented from flat data
+every time. By the time anyone notices, the change is in.
 
 ### What Infrahub delivers
 
-Three things, all of which the pattern in this repository takes
-advantage of:
-
-1. **Rules are graph data, not configuration files.** Each
-   `TopologyReachabilityRule` is a node in the same Infrahub database
-   as the topology it asserts on. It diffs on a branch like any other
-   object. The PR that authors or tightens a rule is reviewed by the
-   same workflow that reviews the topology changes the rule guards.
-2. **Graph traversal answers a question CMDB tools cannot.**
-   Infrahub 1.10's `InfrahubPathTraversal` returns the actual hops
-   between two nodes, branch-aware and time-aware. The check
-   evaluates real paths, not approximations.
-3. **One verdict per assertion on every proposed change.** A
-   `CoreCheckDefinition` with `targets: reachability-rules` fans the
-   check out once per rule and emits a PASS/FAIL verdict card per
-   rule on the PC. Investigators click straight from the rule to
-   the failing path through a server-computed URL attribute on the
-   rule.
+1. **Rules are graph data.** A `TopologyReachabilityRule` sits in the
+   same database as the topology it asserts on — same branch diff,
+   same review workflow.
+2. **Graph traversal answers reachability natively.**
+   `InfrahubPathTraversal` returns the actual hops between two nodes,
+   branch-aware and time-aware. Real paths, not approximations.
+3. **One verdict per rule on every proposed change.** The check fans
+   out per rule and emits a PASS/FAIL card, each linking directly to
+   the offending path.
 
 ## How to use Infrahub
-
-This is the demo flow as a value walkthrough. Each step explains
-what is happening and what the team gains from it.
 
 ### Step 1: Author the rule once, in the graph
 
 The operations team creates a `TopologyReachabilityRule` with a
-`source`, a `destination`, two tuning knobs (`max_depth`,
-`max_paths`), and one or more `TopologyReachabilityConstraint`
-children. Constraints are either `required` (the path must include a
-matching hop) or `forbidden` (no returned path may include one).
-Both endpoints accept any node kind via `peer: CoreNode`, so a rule
-can be device-to-device, flow-to-firewall-zone, tenant-to-tenant, or
-service-to-service.
-
-**Value at this step:** the rule is a graph object. Adding,
-tightening, or retiring a rule is itself a reviewable diff. There is
-exactly one place to look for "what does this rule assert?" and it is
-the same place the topology lives.
+`source`, `destination`, two knobs (`max_depth`, `max_paths`), and
+one or more `TopologyReachabilityConstraint` children. Constraints
+are `required` (path must include a matching hop) or `forbidden` (no
+returned path may include one). Both endpoints accept any node kind
+via `peer: CoreNode`, so a rule can be device-to-device,
+flow-to-firewall-zone, tenant-to-tenant, or service-to-service.
+Adding, tightening, or retiring a rule is itself a reviewable graph
+diff — one place to look for "what does this rule assert?"
 
 ### Step 2: Graph traversal answers the reachability question
 
-When a proposed change opens, Infrahub's
-`InfrahubPathTraversal` finds every path from the rule's source to
-its destination on the proposed-change branch, up to `max_depth`
-hops, capped at `max_paths` paths, and excluding rule/constraint
-nodes themselves so the rule does not appear as a 1-hop shortcut.
-
-**Value at this step:** the check evaluates the actual graph after
-the change. No approximation, no "what we think the topology will
-look like." Branch-aware, so the question can be re-asked at any
-point in time without writing custom queries.
+When a proposed change opens, `InfrahubPathTraversal` finds every
+path from source to destination on the proposed-change branch — up to
+`max_depth` hops, capped at `max_paths`, excluding rule and
+constraint nodes themselves so the rule does not appear as a 1-hop
+shortcut. The check evaluates the actual graph after the change,
+branch-aware and time-aware. No approximation.
 
 ### Step 3: Fan out, one verdict per rule
 
-A `CoreCheckDefinition` named `reachability_assertion` is registered
-with `targets: reachability-rules` and a single
-parameter mapping (`rule_id: "id"`). The Infrahub check runner fans
-the check out one invocation per `TopologyReachabilityRule` member
-of the group, loads the rule with its constraints, runs the
-traversal, evaluates every returned path against every constraint,
-and emits one verdict card per rule.
+The `reachability_assertion` `CoreCheckDefinition` registers
+`targets: reachability-rules` with parameter mapping `rule_id: "id"`.
+The runner fans the check out once per `TopologyReachabilityRule`
+member, runs the traversal, evaluates every returned path against
+every constraint, and emits one verdict card per rule. The reviewer
+sees "atl-to-jfk-via-AS64496 ✅" next to "atl-to-dfw-via-AS64496 ❌"
+rather than a single boolean over the whole set.
 
-**Value at this step:** the assertion granularity matches the rule
-granularity. The PC reviewer sees "atl-to-jfk-via-AS64496 ✅" next
-to "atl-to-dfw-via-AS64496 ❌" rather than a single boolean over the
-whole set.
-
-### Step 4: One click from the verdict to the failing path
+### Step 4: One click from verdict to failing path
 
 Every rule carries a `path_traversal_url` attribute, computed
 server-side by a Python transform whenever the rule's inputs change.
-The Infrahub UI renders it as a clickable hyperlink on the rule
-detail page. Clicking opens `/path-traversal` pre-filtered to the
-same source, destination, depth, and excluded-kinds the check
-evaluated.
-
-**Value at this step:** the investigation surface and the assertion
-surface are the same surface. A reviewer who reads "❌ forbidden hop
-of kind InfraAutonomousSystem with asn=8220 present" clicks the link
-on the rule and sees the offending path immediately.
+The UI renders it as a hyperlink on the rule detail page that opens
+`/path-traversal` pre-filtered to the same source, destination,
+depth, and excluded-kinds the check evaluated. A reviewer reading
+"❌ forbidden hop of kind InfraAutonomousSystem with asn=8220 present"
+clicks once and sees the offending path.
 
 ### Step 5: Separation of duties
 
-Three roles, with object permissions enforcing the separation:
+Three roles, enforced by object permissions:
 
-- **Automation specialist** builds the path-traversal check once
-  (this repo).
-- **Operations team** authors the rules and constraints. They are
-  the only role with create / update / delete on
-  `Topology:ReachabilityRule` and `Topology:ReachabilityConstraint`.
-- **Network engineers** change the topology graph freely. They
-  cannot edit rules, so they cannot loosen the assertion that catches
-  their own change.
+- **Automation specialist** builds the check once (this repo).
+- **Operations team** owns rules and constraints — sole holders of
+  create / update / delete on `Topology:ReachabilityRule` and
+  `Topology:ReachabilityConstraint`.
+- **Network engineers** change the topology freely but cannot edit
+  rules, so they cannot loosen the assertion that catches their own
+  change.
 
-**Value at this step:** network engineers do not have to worry
-about whether their change broke a topology guarantee. The check
-absorbs that worry. The operations team sets constraints in stone
-that the network engineer cannot change no matter what, and every
-change a network engineer makes is checked against those rules
-before merge. The rule surface is reviewable separately, by a
-smaller team, on a slower cadence.
+Network engineers stop carrying the worry about whether their change
+broke a topology guarantee — the check absorbs it. Rules live on a
+smaller team, slower cadence; topology lives on the engineers, day
+to day.
 
 ## Beyond reachability — same notation, many invariants
 
-Every domain in the table above is the same `source → destination +
-hop predicates` rule shape pointed at different parts of the graph.
-Adding a new domain typically means adding a new hop predicate vocabulary
-(for example `hop_attribute_ge` for capacity, `disjoint_paths` for
-redundancy), not rebuilding the pipeline:
+Same `source → destination + hop predicates` rule shape, different
+parts of the graph. Adding a domain typically means a new
+hop-predicate vocabulary (e.g., `hop_attribute_ge` for capacity,
+`disjoint_paths` for redundancy) — not rebuilding the pipeline:
 
 | Use case                       | Rule shape                                                                 |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -252,17 +205,16 @@ redundancy), not rebuilding the pipeline:
 | **Change impact assessment**   | diff: reachable paths · before vs after                                    |
 | **Continuous compliance**      | policy holds · on every change                                             |
 
-> **Future demos.** Today only the routing / transit scenario ships
-> with a runnable docker-compose demo (the `live-demo` branch). If
-> there is demand for any of the other use-cases above, additional
-> demo branches (`live-demo-firewall-compliance`,
-> `live-demo-capacity-reachability`, etc.) will follow. Open an issue
-> or drop a note in the OpsMill Discord (`discord.gg/opsmill`) to
-> vote on which one comes next.
+> **Future demos.** Only the routing / transit scenario currently
+> ships with a runnable demo (the `live-demo` branch). Additional
+> branches (`live-demo-firewall-compliance`,
+> `live-demo-capacity-reachability`, etc.) will follow for any
+> use-case with demand. Vote via GitHub issue or OpsMill Discord
+> (`discord.gg/opsmill`).
 
 ## Try it
 
-Switch to the [`live-demo`](../../tree/live-demo) branch and run:
+Switch to [`live-demo`](../../tree/live-demo) and run:
 
 ```bash
 uv run invoke demo.up
@@ -271,8 +223,8 @@ uv run invoke demo.up
 This brings up Infrahub 1.10 in docker, registers this repository as
 a `CoreRepository`, seeds the topology, creates the rules, and opens
 three proposed changes mirroring the recorded demo (Sofia, Chloe,
-Administrator). The full walkthrough lives in
-[`QUICKSTART.md`](../../tree/live-demo/QUICKSTART.md) on that branch.
+Administrator). Full walkthrough in
+[`QUICKSTART.md`](../../tree/live-demo/QUICKSTART.md).
 
 ## Infrahub in 30 seconds
 
@@ -280,11 +232,11 @@ Administrator). The full walkthrough lives in
 truth for infrastructure data with git-style branching, a typed
 schema you extend, and a proposed-change pipeline that runs checks
 against the branched data before merge. This repository is one
-worked example of that machinery: a user-extended schema
-(`TopologyReachabilityRule` + `TopologyReachabilityConstraint`), a
-stored GraphQL query, a Python transform that produces a
-computed-attribute URL, and a Python check that evaluates the rule
-against `InfrahubPathTraversal` results on every proposed change.
+worked example: a user-extended schema (`TopologyReachabilityRule` +
+`TopologyReachabilityConstraint`), a stored GraphQL query, a Python
+transform producing a computed-attribute URL, and a Python check that
+evaluates the rule against `InfrahubPathTraversal` results on every
+proposed change.
 
-For the architecture, deployment recipe, RBAC details, and adoption
-guide, continue to [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md).
+For architecture, deployment, RBAC, and adoption guide, continue to
+[`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md).
