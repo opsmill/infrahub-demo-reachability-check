@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# Local docker-compose overrides (e.g. host port mapping) — keep these
+# out of the upstream repo.
+docker-compose.override.yml

@@ -1,6 +1,6 @@
 """Reachability path-assertion check.
 
-Each member of the targeted group is a DemoReachabilityRule node. The runner
+Each member of the targeted group is a TopologyReachabilityRule node. The runner
 fans out one invocation per member and resolves the per-rule path expressions
 declared in .infrahub.yml into self.params. This check then loads the rule
 with its constraint children and evaluates each path returned by
@@ -31,8 +31,8 @@ DEFAULT_PUBLIC_URL = "http://localhost:8000"
 # check evaluated. Without this, the path-traversal page would include the
 # rule/constraint nodes as 1-hop shortcuts between source and destination.
 EXCLUDED_KINDS = (
-    "DemoReachabilityRule",
-    "DemoReachabilityConstraint",
+    "TopologyReachabilityRule",
+    "TopologyReachabilityConstraint",
     "InfraPlatform",
 )
 
@@ -116,7 +116,7 @@ class PathAssertionCheck(InfrahubCheck):
             return
 
         rule = await self.client.get(
-            kind="DemoReachabilityRule",
+            kind="TopologyReachabilityRule",
             id=rule_id,
             branch=self.branch_name,
             include=["constraints"],

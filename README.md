@@ -54,11 +54,11 @@ is already in.
 This pattern turns each reachability invariant into a graph node that
 participates in the normal Infrahub workflow:
 
-- **Rules are objects** (`DemoReachabilityRule`) with `source`,
+- **Rules are objects** (`TopologyReachabilityRule`) with `source`,
   `destination`, traversal depth/cap, and zero or more `constraints`.
   Both endpoints are `peer: CoreNode` — a rule can connect any two node
   kinds (device-to-device, prefix-to-device, AS-to-AS — your call).
-- **Constraints are children of the rule** (`DemoReachabilityConstraint`)
+- **Constraints are children of the rule** (`TopologyReachabilityConstraint`)
   with three polarities: `required` (path must include a matching hop),
   `forbidden` (no returned path may include one — *global invariant*),
   and `any_of` (at least one option must match per path).
@@ -88,8 +88,8 @@ The shape is:
 - **Engineers** keep their existing read-write role across the rest of
   the network graph (devices, interfaces, BGP sessions, …).
 - The "Global read-write" role gets a small set of **DENY** object
-  permissions on the rule surface — typically `Demo:ReachabilityRule`
-  and `Demo:ReachabilityConstraint`, on `create`, `update`, and
+  permissions on the rule surface — typically `Topology:ReachabilityRule`
+  and `Topology:ReachabilityConstraint`, on `create`, `update`, and
   `delete`. DENY beats ALLOW.
 - **Super Administrators** retain authoring access via their
   wildcard-allow permission.
@@ -106,7 +106,7 @@ through the SDK). Concretely:
 
 - 6 deny permissions, one per `{ReachabilityRule, ReachabilityConstraint}`
   × `{create, update, delete}`, all `decision: Deny`,
-  `namespace: Demo`, attached to whichever role(s) your engineers hold.
+  `namespace: Topology`, attached to whichever role(s) your engineers hold.
 
 See the Infrahub docs for role/permission authoring details — the
 mechanism is the same one you'd use to lock down any other kind.
@@ -127,12 +127,12 @@ sequenceDiagram
     User->>PC: Open / re-run proposed change
     PC->>Fan: Trigger user checks on each repository
     Note over Fan: Load CoreStandardGroup("reachability-rules")
-    loop For each DemoReachabilityRule in the group
+    loop For each TopologyReachabilityRule in the group
         Fan->>Fan: member.extract(parameters)<br/>{rule_id, source_id, destination_id,<br/>max_depth, max_paths, enabled}
         Fan->>Check: run_user_check(params)
         Check->>GQL: collect_data → path_check<br/>(variables = self.params)
         GQL-->>Check: paths[], source, destination
-        Check->>Check: client.get(DemoReachabilityRule,<br/>include=["constraints"])
+        Check->>Check: client.get(TopologyReachabilityRule,<br/>include=["constraints"])
         Check->>Check: evaluate every path against<br/>required / forbidden / any_of
         Check->>Verdict: log_entries (incl. "Inspect in UI: <url>"),<br/>conclusion, severity
     end
@@ -147,8 +147,8 @@ graph TB
     subgraph SCH ["Schema (authored once)"]
         direction TB
         Group[("CoreStandardGroup<br/>reachability-rules")]
-        Rule["<b>DemoReachabilityRule</b><br/>name • max_depth<br/>max_paths • enabled"]
-        Constraint["<b>DemoReachabilityConstraint</b><br/>polarity = required &#124; forbidden &#124; any_of<br/>hop_kind • attribute_name • attribute_value"]
+        Rule["<b>TopologyReachabilityRule</b><br/>name • max_depth<br/>max_paths • enabled"]
+        Constraint["<b>TopologyReachabilityConstraint</b><br/>polarity = required &#124; forbidden &#124; any_of<br/>hop_kind • attribute_name • attribute_value"]
         Source(("source<br/>peer: CoreNode"))
         Dest(("destination<br/>peer: CoreNode"))
         Group -- members --> Rule
@@ -201,7 +201,7 @@ A constraint matches a hop when `hop["kind"] == hop_kind`. If
 reachability_check/
   .infrahub.yml              # registers schema, query, check, menu
   .gitignore                 # excludes __pycache__
-  schemas/reachability.yml   # DemoReachabilityRule + DemoReachabilityConstraint
+  schemas/reachability.yml   # TopologyReachabilityRule + TopologyReachabilityConstraint
   menus/reachability.yml     # "Reachability Check" sidebar entry → rule list
   queries/path_check.gql     # parameterised InfrahubPathTraversal
   checks/path_assertion.py   # PathAssertionCheck
@@ -234,17 +234,47 @@ INFRAHUB_ADDRESS=... INFRAHUB_API_TOKEN=... \
 #    PASS / FAIL with the actual paths in the verdict message.
 ```
 
-### Renaming the rule kinds
+### Tune the excluded kinds for your schema
 
 `queries/path_check.gql` hard-codes
-`excluded_kinds: ["DemoReachabilityRule", "DemoReachabilityConstraint", "InfraPlatform"]`.
-Without these exclusions, the path-traversal engine treats the rule
-node itself as a hop between source and destination — because the rule
-has cardinality-one relationships to both — and every reachability
-assertion collapses to a trivial "the rule connects them" path.
-`InfraPlatform` is also excluded because every device on the same
-vendor stack shares a platform node and the traversal would otherwise
-prefer that 2-hop shortcut.
+`excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint", "InfraPlatform"]`.
+This list controls **which node kinds the traversal will refuse to walk
+through as hops** — and getting it right matters more than it looks at
+first glance.
+
+Why the defaults are what they are:
+
+- `TopologyReachabilityRule` — every rule has cardinality-one
+  relationships to its `source` and `destination`. Without this exclusion
+  the traversal sees the rule itself as a 1-hop shortcut between the
+  endpoints, and every reachability assertion collapses to a trivial
+  "the rule connects them" path.
+- `TopologyReachabilityConstraint` — children of the rule. Excluded for
+  the same reason.
+- `InfraPlatform` — in the standard `models/base` schemas, every device
+  on the same vendor stack shares a platform node, so the traversal
+  would prefer a 2-hop `device → InfraPlatform → device` shortcut over
+  the real network path. Drop this if you don't have `InfraPlatform`
+  in your schema (Infrahub 1.10 rejects unknown `excluded_kinds` values
+  with `excluded_kinds kind '<X>' not in schema`).
+
+You will almost certainly need to **tune this list for your topology**.
+Two common situations:
+
+- **A kind in the default list doesn't exist in your schema.** Remove
+  it, or the GraphQL call will fail outright. The `demo` branch ships
+  a minimal schema and drops `InfraPlatform` for exactly this reason.
+- **Your topology has its own "shortcut" kinds.** Anything that
+  cardinality-many-relates a large fraction of nodes (e.g. a shared
+  `Organization`, `Tag`, `Site`, `Tenant`, or a global `Vendor` node)
+  will cause the traversal to prefer a short artificial path through
+  it instead of the real network hops you want to assert on. Add those
+  kinds to `excluded_kinds`.
+
+When in doubt, open a path between two endpoints directly in
+`/path-traversal`, look at what shows up in the depth-1 and depth-2
+results, and exclude any kind that doesn't represent a real hop in
+your domain.
 
 If you change the namespace or rename the kinds, update **three**
 places in lock-step:
