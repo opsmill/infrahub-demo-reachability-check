@@ -419,28 +419,3 @@ Once the group exists and at least one rule is a member of it, every
 proposed change runs the check and produces a PASS or FAIL verdict
 per rule. Click into the rule on its detail page to follow the
 `path_traversal_url` link straight to `/path-traversal`.
-
-## Honest limitations
-
-- **SDK 1.22 or later is required.** The check uses
-  `InfrahubClient.traverse_paths()`, added in SDK 1.22, instead of
-  executing the stored `path_check.gql` query directly. The stored
-  query stays registered (the `CoreCheckDefinition` requires a
-  `query`) but is never executed; the SDK helper builds its own
-  GraphQL call.
-- **No "what-if" preview outside a proposed change.** The check
-  fires inside the proposed-change pipeline. To explore a path on a
-  branch interactively, query `InfrahubPathTraversal` directly from
-  the GraphQL playground.
-- **No baseline diff.** "Did the path change since the last proposed
-  change?" is not part of this example. Storing prior paths as
-  artifacts or as a sibling node kind would let a second check
-  compare.
-- **`max_paths` is a real cap.** The traversal returns at most
-  `max_paths` paths; the check evaluates what it gets. Raise
-  `max_paths` per rule if you suspect you are missing paths, at the
-  cost of traversal latency.
-- **`hop_kind` choices are static.** The schema declares a
-  `Dropdown` of common kinds. Adding a new topology kind requires
-  extending the `choices` list. If you frequently add new kinds,
-  consider switching to `Text`.

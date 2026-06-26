@@ -9,6 +9,21 @@ Infrahub object, evaluated on every proposed change.
 
 📺 **Walkthrough video:** [Reachability Check via Graph Traversal on YouTube](https://www.youtube.com/watch?v=guyEHTsqruI).
 
+> **Where this came from.** Infrahub 1.10 introduced path traversal
+> at AutoCon. The audience reception was strong, and the follow-up
+> questions were uniformly *"can this also be used for impact
+> assessment? firewall compliance? maintenance drain scenarios?
+> physical and logical topology evaluation?"* The answer is yes,
+> every one of them, with the primitives Infrahub already ships.
+> This repository is the worked example.
+
+> **Works in Infrahub today, with no product changes.** The schema,
+> check, transform, stored query, and menu in this repository are
+> user content. The path-traversal engine, the proposed-change
+> pipeline, role-based object permissions, and computed attributes
+> are the existing Infrahub 1.10 surface. There is nothing to fork,
+> patch, or wait for.
+
 **Where to go from here:**
 
 - *Just want to run it?* Switch to the [`live-demo`](../../tree/live-demo)
@@ -160,9 +175,13 @@ Three roles, with object permissions enforcing the separation:
   cannot edit rules, so they cannot loosen the assertion that catches
   their own change.
 
-**Value at this step:** the engineer making the change cannot
-silently weaken the guardrail. The rule surface is reviewable
-separately, by a smaller team, on a slower cadence.
+**Value at this step:** network engineers do not have to worry
+about whether their change broke a topology guarantee. The check
+absorbs that worry. The operations team sets constraints in stone
+that the network engineer cannot change no matter what, and every
+change a network engineer makes is checked against those rules
+before merge. The rule surface is reviewable separately, by a
+smaller team, on a slower cadence.
 
 ## Beyond reachability — same notation, many invariants
 
