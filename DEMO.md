@@ -43,7 +43,7 @@ After step 2 the graph contains:
 | `InfraDevice`                     | 3     | atl1-edge1, jfk1-edge1, dfw1-edge1             |
 | `InfraBGPSession`                 | 4     | full mesh on AS64496 plus atl1↔jfk1 on AS8220  |
 | `TopologyReachabilityRule`        | 2     | atl-to-jfk-via-as64496, atl-to-dfw-via-as64496 |
-| `TopologyReachabilityConstraint`  | 3     | "Must transit AS64496" ×2, "Never transit AS8220" ×1 |
+| `TopologyReachabilityConstraint`  | 3     | "Required AS64496" ×2, "Forbidden AS8220" ×1 |
 
 ## The two rules
 
@@ -54,8 +54,8 @@ atl-to-jfk-via-as64496
   max_depth:     3
   max_paths:     50
   constraints:
-    - Must transit:  InfraAutonomousSystem.asn = 64496   (Duff)
-    - Never transit: InfraAutonomousSystem.asn = 8220    (Colt)
+    - Required hop:  InfraAutonomousSystem.asn = 64496   (Duff)
+    - Forbidden hop: InfraAutonomousSystem.asn = 8220    (Colt)
 
 atl-to-dfw-via-as64496
   source:        atl1-edge1
@@ -63,7 +63,7 @@ atl-to-dfw-via-as64496
   max_depth:     3
   max_paths:     50
   constraints:
-    - Must transit:  InfraAutonomousSystem.asn = 64496
+    - Required hop:  InfraAutonomousSystem.asn = 64496
 ```
 
 These match the deck. The Atlanta-to-NYC rule asserts that the path
@@ -204,9 +204,9 @@ differs in the following ways:
 | Topology                      | Bring your own                      | Small bundled seed in `demo-seed/`         |
 | Runner                        | n/a                                 | `uv run invoke demo.start / demo.init`     |
 
-The check semantics are identical. `Must transit` (required) is
-existence-based, `Never transit` (forbidden) is global, and `Any of`
-is existence-based per path.
+The check semantics are identical. `Required hop` (required) is
+existence-based, `Forbidden hop` (forbidden) is global, and `Any-of hop`
+(any_of) is existence-based per path.
 
 ## Tear down
 

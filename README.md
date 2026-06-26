@@ -238,9 +238,9 @@ graph TB
 
 | Polarity (UI label) | Enum name   | Semantics                                                 |
 | ------------------- | ----------- | --------------------------------------------------------- |
-| **Must transit**    | `required`  | At least one returned path must contain a matching hop.   |
-| **Never transit**   | `forbidden` | **No** returned path may contain a matching hop (global). |
-| **Any of**          | `any_of`    | At least one `any_of` constraint must match per path.     |
+| **Required hop**    | `required`  | At least one returned path must contain a matching hop.   |
+| **Forbidden hop**   | `forbidden` | **No** returned path may contain a matching hop (global). |
+| **Any-of hop**      | `any_of`    | At least one `any_of` predicate must match per path.      |
 
 A constraint matches a hop when `hop["kind"] == hop_kind`. If
 `attribute_name` is set, the hop node's attribute value must also equal

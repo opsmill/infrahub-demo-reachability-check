@@ -91,21 +91,22 @@ nodes:
         default_value: required
         optional: true
         order_weight: 900
-        # Labels match the vocabulary used in the customer-facing demo
-        # ("must transit" / "never transit") while the enum names stay
+        # Labels stay domain-neutral so the rule reads naturally for
+        # routing, firewall compliance, capacity, tenant segmentation,
+        # and service-dependency use cases alike. The enum names stay
         # stable so existing data / data-loader YAML keeps working.
         choices:
           - name: required
-            label: Must transit
-            description: "Path must include this hop."
+            label: Required hop
+            description: "The path must include at least one hop that matches this predicate."
             color: "#7fbf7f"
           - name: forbidden
-            label: Never transit
-            description: "Path may not include this hop."
+            label: Forbidden hop
+            description: "No returned path may include a hop that matches this predicate."
             color: "#ff8080"
           - name: any_of
-            label: Any of
-            description: "At least one of the any-of constraints must match per path."
+            label: Any-of hop
+            description: "At least one any-of predicate must match a hop on every returned path."
             color: "#a0a0ff"
       - name: hop_kind
         kind: Dropdown

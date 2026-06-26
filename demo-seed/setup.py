@@ -173,6 +173,128 @@ async def _seed_rules() -> None:
         print(f"  constraints: {len(spec.get('constraints', []))}")
 
 
+# Three demo proposed changes mirroring slide 15 of the deck. The third
+# one (admin tightens max_depth) is included alongside the two the user
+# explicitly asked for because the cost is negligible and it produces
+# the "no path within depth 1" failure mode in the recorded demo.
+SCENARIOS: list[dict] = [
+    {
+        "branch": "shernandez-doc-tweak",
+        "pc_name": "Sofia Hernandez: atl1 documentation tweak (happy path)",
+        "pc_description": (
+            "Engineering Team member makes a benign description change "
+            "to atl1-edge1. Both reachability rules stay green."
+        ),
+        "edits": [
+            {
+                "kind": "InfraDevice",
+                "hfid": "atl1-edge1",
+                "attributes": {
+                    "description": "documentation tweak: updated maintenance window",
+                },
+            },
+        ],
+    },
+    {
+        "branch": "cobrian-reroute-via-colt",
+        "pc_name": "Chloe O'Brian: reroute atl1 via Colt (AS8220)",
+        "pc_description": (
+            "Single-field change: atl1-edge1.asn AS64496 -> AS8220 (Colt). "
+            "The atl-to-jfk reachability rule fails on the forbidden hop."
+        ),
+        "edits": [
+            {
+                "kind": "InfraDevice",
+                "hfid": "atl1-edge1",
+                "relationships": {
+                    "asn": {"kind": "InfraAutonomousSystem", "hfid": "8220"},
+                },
+            },
+        ],
+    },
+    {
+        "branch": "admin-tighten-depth",
+        "pc_name": "Administrator: tighten atl-to-jfk max_depth 3 to 1",
+        "pc_description": (
+            "Operations Team tightens the rule. The atl-to-jfk rule "
+            "fails with 'No path within depth 1'."
+        ),
+        "edits": [
+            {
+                "kind": "TopologyReachabilityRule",
+                "hfid": "atl-to-jfk-via-as64496",
+                "attributes": {"max_depth": 1},
+            },
+        ],
+    },
+]
+
+
+async def _existing_branch(client: InfrahubClient, name: str) -> bool:
+    branches = await client.branch.all()
+    if isinstance(branches, dict):
+        return name in branches
+    return any(getattr(b, "name", None) == name for b in branches)
+
+
+async def _apply_edit(client: InfrahubClient, branch: str, edit: dict) -> None:
+    node = await client.get(kind=edit["kind"], hfid=[edit["hfid"]], branch=branch)
+    for attribute_name, value in edit.get("attributes", {}).items():
+        attribute = getattr(node, attribute_name)
+        attribute.value = value
+    for relationship_name, ref in edit.get("relationships", {}).items():
+        peer = await client.get(kind=ref["kind"], hfid=[ref["hfid"]], branch=branch)
+        setattr(node, relationship_name, peer.id)
+    await node.save()
+
+
+async def _existing_pc(client: InfrahubClient, name: str) -> Any | None:
+    matches = await client.filters(kind="CoreProposedChange", name__value=name)
+    return matches[0] if matches else None
+
+
+async def _seed_scenarios() -> None:
+    """Create the demo branches, apply the single-field edits, and open the PCs.
+
+    Mirrors slide 15 of the deck. Each scenario is a one-field change on
+    its own Infrahub branch; opening the proposed change kicks off the
+    standard validation pipeline, which fans the reachability check out
+    across the rules group and produces one verdict card per rule.
+    """
+    client = InfrahubClient(
+        config=Config(
+            address=os.environ["INFRAHUB_ADDRESS"],
+            api_token=os.environ["INFRAHUB_API_TOKEN"],
+        )
+    )
+
+    for scenario in SCENARIOS:
+        branch_name = scenario["branch"]
+        if await _existing_branch(client, branch_name):
+            print(f"branch {branch_name} already exists")
+        else:
+            await client.branch.create(branch_name=branch_name, sync_with_git=True)
+            print(f"created branch {branch_name}")
+
+        for edit in scenario["edits"]:
+            await _apply_edit(client, branch_name, edit)
+        print(f"  applied {len(scenario['edits'])} edit(s) on {branch_name}")
+
+        existing = await _existing_pc(client, scenario["pc_name"])
+        if existing:
+            print(f"proposed change '{scenario['pc_name']}' already exists")
+            continue
+        pc = await client.create(
+            kind="CoreProposedChange",
+            name=scenario["pc_name"],
+            description=scenario["pc_description"],
+            source_branch=branch_name,
+            destination_branch="main",
+        )
+        await pc.save()
+        print(f"opened proposed change '{scenario['pc_name']}'")
+
+
 def main() -> None:
     if "INFRAHUB_ADDRESS" not in os.environ or "INFRAHUB_API_TOKEN" not in os.environ:
         print(
@@ -188,13 +310,16 @@ def main() -> None:
         _load_schemas_and_data()
     elif phase == "rules":
         asyncio.run(_seed_rules())
+    elif phase == "scenarios":
+        asyncio.run(_seed_scenarios())
     elif phase == "all":
         _load_schemas_and_data()
         asyncio.run(_seed_rules())
+        asyncio.run(_seed_scenarios())
     else:
         print(
             f"ERROR: DEMO_INIT_PHASE='{phase}' is not recognised. "
-            "Expected one of: data, rules, all.",
+            "Expected one of: data, rules, scenarios, all.",
             file=sys.stderr,
         )
         sys.exit(2)

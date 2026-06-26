@@ -3,14 +3,16 @@
 Run with `uv run invoke <task>`. Verbs mirror Infrahub's own
 `dev.start` / `dev.init` convention so the muscle memory transfers:
 
-  uv run invoke demo.start          # prepare bare clone + docker compose up + wait healthy
-  uv run invoke demo.register-repo  # register the CoreRepository so the Python transform installs
-  uv run invoke demo.init           # load network schema + data + create rules
-  uv run invoke demo.up             # start + register-repo + init in one go
-  uv run invoke demo.status         # ping the running stack
-  uv run invoke demo.logs           # tail infrahub-server logs
-  uv run invoke demo.stop           # docker compose down (preserves volumes)
-  uv run invoke demo.reset          # docker compose down -v (wipes everything)
+  uv run invoke demo.start                       # prepare bare clone + docker compose up + wait healthy
+  uv run invoke demo.register-repo               # register the CoreRepository so the Python transform installs
+  uv run invoke demo.init --phase data           # load schemas + menu + seed + rules group
+  uv run invoke demo.init --phase rules          # create the reachability rules + constraints
+  uv run invoke demo.init --phase scenarios      # create the demo branches + proposed changes
+  uv run invoke demo.up                          # all of the above, in order
+  uv run invoke demo.status                      # ping the running stack
+  uv run invoke demo.logs                        # tail infrahub-server logs
+  uv run invoke demo.stop                        # docker compose down (preserves volumes)
+  uv run invoke demo.reset                       # docker compose down -v (wipes everything)
 """
 
 from __future__ import annotations
