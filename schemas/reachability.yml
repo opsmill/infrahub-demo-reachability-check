@@ -41,9 +41,9 @@ nodes:
       # source / destination / depth / maxPaths and the canonical
       # EXCLUDED_KINDS list. The attribute kind is ``URL`` so the
       # Infrahub UI renders the value as a clickable hyperlink on the
-      # rule detail page. The check reads ``.value`` (the raw string)
-      # at evaluation time, exactly as it would for a Text attribute,
-      # and embeds it in the verdict log message.
+      # rule detail page. The check does not consume this value; the
+      # URL lives on the rule itself so a single click from the
+      # detail page opens the same hops the check evaluated.
       - name: path_traversal_url
         kind: URL
         read_only: true
@@ -107,10 +107,6 @@ nodes:
             label: Forbidden hop
             description: "No returned path may include a hop that matches this predicate."
             color: "#ff8080"
-          - name: any_of
-            label: Any-of hop
-            description: "At least one any-of predicate must match a hop on every returned path."
-            color: "#a0a0ff"
       - name: hop_kind
         kind: Dropdown
         order_weight: 1000

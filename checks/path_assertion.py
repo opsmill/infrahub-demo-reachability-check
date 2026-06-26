@@ -125,13 +125,21 @@ class PathAssertionCheck(InfrahubCheck):
         if _is_disabled(rule.enabled.value):
             return {"_disabled": True}
 
-        source_id = rule.source.id
-        destination_id = rule.destination.id
-        if source_id and source_id == destination_id:
-            return {"_self_loop": True}
+        # Guard the relationship access: a cleared or unset
+        # ``source`` / ``destination`` makes ``rule.source`` itself
+        # ``None`` on the SDK node, so the ``.id`` attribute read would
+        # raise ``AttributeError`` before we can return the cleaner
+        # ``_missing_endpoints`` sentinel.
+        source = getattr(rule, "source", None)
+        destination = getattr(rule, "destination", None)
+        source_id = getattr(source, "id", None) if source is not None else None
+        destination_id = getattr(destination, "id", None) if destination is not None else None
 
         if not source_id or not destination_id:
             return {"_missing_endpoints": True}
+
+        if source_id == destination_id:
+            return {"_self_loop": True}
 
         self._traversal_result = await self.client.traverse_paths(
             source=source_id,
@@ -152,15 +160,15 @@ class PathAssertionCheck(InfrahubCheck):
             self.log_info(message="Rule is disabled; skipping evaluation.")
             return
 
-        if data.get("_self_loop"):
-            self.log_error(
-                message="Rule source and destination resolve to the same node; assertion is ill-defined.",
-            )
-            return
-
         if data.get("_missing_endpoints"):
             self.log_error(
                 message="Rule is missing source or destination; cannot evaluate.",
+            )
+            return
+
+        if data.get("_self_loop"):
+            self.log_error(
+                message="Rule source and destination resolve to the same node; assertion is ill-defined.",
             )
             return
 
@@ -202,13 +210,11 @@ class PathAssertionCheck(InfrahubCheck):
 
         required = [c for c in constraints if c.polarity.value == "required"]
         forbidden = [c for c in constraints if c.polarity.value == "forbidden"]
-        any_of = [c for c in constraints if c.polarity.value == "any_of"]
 
         # ``forbidden`` is a global invariant. A single offending hop on
         # any returned path fails the check, even if other paths satisfy
-        # ``required``. ``required`` and ``any_of`` keep existence
-        # semantics: at least one path must include all required hops and
-        # at least one any_of option.
+        # ``required``. ``required`` keeps existence semantics: at least
+        # one path must include all required hops.
         forbidden_hits: list[str] = []
         requirement_violations: list[str] = []
         valid_count = 0
@@ -223,11 +229,6 @@ class PathAssertionCheck(InfrahubCheck):
             for c in required:
                 if not any(self._hop_matches(hop, c, attr_values) for hop in hops):
                     problems.append(f"missing required {self._describe(c)}")
-            if any_of and not any(
-                self._hop_matches(hop, c, attr_values) for hop in hops for c in any_of
-            ):
-                options = " | ".join(self._describe(c) for c in any_of)
-                problems.append(f"none of any_of constraints matched: {options}")
 
             if problems:
                 requirement_violations.append(f"[{trail}]: {'; '.join(problems)}")
@@ -235,7 +236,7 @@ class PathAssertionCheck(InfrahubCheck):
                 valid_count += 1
 
         errors: list[str] = list(forbidden_hits)
-        if (required or any_of) and valid_count == 0:
+        if required and valid_count == 0:
             errors.extend(requirement_violations)
 
         if errors:
@@ -255,7 +256,7 @@ class PathAssertionCheck(InfrahubCheck):
         ok = True
         for c in constraints:
             polarity = c.polarity.value
-            if polarity not in {"required", "forbidden", "any_of"}:
+            if polarity not in {"required", "forbidden"}:
                 self.log_error(message=f"Constraint '{c.label.value}': unknown polarity '{polarity}'.")
                 ok = False
             if not c.hop_kind.value:

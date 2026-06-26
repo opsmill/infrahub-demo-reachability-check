@@ -82,22 +82,22 @@ workflow:
   flow-to-firewall-zone, service-to-service, tenant-to-tenant, or
   prefix-to-device, depending on the use case).
 - **Constraints are children of the rule** (`TopologyReachabilityConstraint`)
-  with three polarities: `required` (path must include a matching hop),
-  `forbidden` (no returned path may include one; a *global invariant*),
-  and `any_of` (at least one option must match per path).
+  with two polarities: `required` (path must include a matching hop)
+  and `forbidden` (no returned path may include one; a *global invariant*).
 - **The check runs on every proposed change**. The Infrahub pipeline
   fans the check out per rule via the `reachability-rules`
   `CoreStandardGroup`. Each rule yields a PASS/FAIL verdict card on the
-  PC. The FAIL message names the offending path and includes a clickable
-  URL that opens the same hops in the path-traversal UI.
+  PC. The FAIL message names the offending path and the constraint
+  that flagged it.
 - **Rules diff on branches like any other object**. Tightening a rule
   (lowering `max_depth`, adding a forbidden hop) is itself a
   PR-reviewable change, and that PR runs the check too, so the team
   sees what the *new* rule would have done against the topology.
-- **Click-through from the verdict to the failing path.** The check
-  emits an `Inspect in UI: <url>` line that opens the path-traversal
-  page pre-filtered to the same source / destination / depth /
-  excluded-kinds the check evaluated.
+- **Click-through to the path is one link away.** Every rule carries
+  a `path_traversal_url` computed attribute that the Infrahub UI
+  renders as a clickable hyperlink on the rule detail page. It opens
+  the path-traversal view pre-filtered to the same source /
+  destination / depth / excluded-kinds the check evaluated.
 
 ### Separation of duties: three roles, one workflow
 
@@ -184,7 +184,7 @@ sequenceDiagram
         Check->>Check: client.get(TopologyReachabilityRule, rule_id,<br/>include=["constraints"])
         Check->>GQL: client.traverse_paths(source, destination,<br/>max_depth, max_paths, excluded_kinds)
         GQL-->>Check: PathTraversalResult: paths[], source, destination
-        Check->>Check: evaluate every path against<br/>required / forbidden / any_of
+        Check->>Check: evaluate every path against<br/>required / forbidden
         Check->>Verdict: log_entries (per-path verdict),<br/>conclusion, severity
     end
     Verdict-->>UI: validator aggregates per-rule cards
@@ -199,7 +199,7 @@ graph TB
         direction TB
         Group[("CoreStandardGroup<br/>reachability-rules")]
         Rule["<b>TopologyReachabilityRule</b><br/>name • max_depth<br/>max_paths • enabled"]
-        Constraint["<b>TopologyReachabilityConstraint</b><br/>polarity = required &#124; forbidden &#124; any_of<br/>hop_kind • attribute_name • attribute_value"]
+        Constraint["<b>TopologyReachabilityConstraint</b><br/>polarity = required &#124; forbidden<br/>hop_kind • attribute_name • attribute_value"]
         Source(("source<br/>peer: CoreNode"))
         Dest(("destination<br/>peer: CoreNode"))
         Group -- members --> Rule
@@ -220,7 +220,6 @@ graph TB
         direction TB
         Req["<b>required</b> hop_kind=AS asn=64496<br/>→ AS64496 hop present ✔"]
         Fbd["<b>forbidden</b> hop_kind=AS asn=65999<br/>→ no matching hop ✔"]
-        Anyo["<b>any_of</b> {asn=65001, asn=65002}<br/>→ at least one match required"]
     end
 
     Constraint -. "evaluated against every<br/>returned path" .-> RUN
@@ -231,7 +230,7 @@ graph TB
     classDef eval fill:#fff3e0,stroke:#f57c00
     class Group,Rule,Constraint,Source,Dest schema
     class H0,H1,H2,H3,H4 runtime
-    class Req,Fbd,Anyo eval
+    class Req,Fbd eval
 ```
 
 ## Constraint polarities
@@ -240,7 +239,6 @@ graph TB
 | ------------------- | ----------- | --------------------------------------------------------- |
 | **Required hop**    | `required`  | At least one returned path must contain a matching hop.   |
 | **Forbidden hop**   | `forbidden` | **No** returned path may contain a matching hop (global). |
-| **Any-of hop**      | `any_of`    | At least one `any_of` predicate must match per path.      |
 
 A constraint matches a hop when `hop["kind"] == hop_kind`. If
 `attribute_name` is set, the hop node's attribute value must also equal
@@ -307,8 +305,6 @@ Why this matters:
   the actual deployment URL.
 - **Branch-aware**: on a branch with a tightened `max_depth`, the URL
   reflects the branch value automatically.
-- **Host-agnostic**: relative URL, no env-var to keep in sync with
-  the actual deployment URL.
 - **Easier to extend**: add a new query parameter (for example, a
   constraint fingerprint) by editing the transform alone. No check
   change is required.
@@ -386,8 +382,8 @@ reachability check:
    one to the `reachability-rules` group. The rule's `source` and
    `destination` accept any node kind in your graph; the
    `constraints` relationship attaches the per-rule predicates
-   (required, forbidden, any-of). Author them through the UI, the
-   SDK, or `infrahubctl object load`.
+   (required, forbidden). Author them through the UI, the SDK, or
+   `infrahubctl object load`.
 
 Once the group exists and at least one rule is a member of it, every
 proposed change runs the check and produces a PASS or FAIL verdict
@@ -491,12 +487,13 @@ endpoints and constraint hops change.
 | **Continuous compliance**         | "Every change is checked against policy and recorded, with a full queryable audit trail." <br/>`policy holds · on every change` |
 
 Some of these need a richer constraint vocabulary than the
-`required` / `forbidden` / `any_of` polarities shipped here (e.g. a
+`required` / `forbidden` polarities shipped here (for example a
 `hop_attribute_ge` for capacity, a `disjoint_paths` count for
-redundancy). The recipe for adding them is the same one used for
-the existing constraints: a new `polarity` choice, a few extra fields
-on `TopologyReachabilityConstraint`, and a branch in the check's
-`validate()` that interprets them.
+redundancy, or a re-added `any_of` polarity for disjunctive
+predicates). The recipe for adding them is the same one used for
+the existing constraints: a new `polarity` choice, a few extra
+fields on `TopologyReachabilityConstraint`, and a branch in the
+check's `validate()` that interprets them.
 
 > **Future demos.** Today only the **routing / transit** scenario
 > ships with a runnable docker-compose demo (the `live-demo` branch
