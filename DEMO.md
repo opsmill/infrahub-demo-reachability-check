@@ -35,8 +35,8 @@ After step 2 you have:
 | `InfraAutonomousSystem`       | 3     | AS64496 (Duff), AS8220 (Colt), AS701  |
 | `InfraDevice`                 | 3     | atl1-edge1, jfk1-edge1, dfw1-edge1    |
 | `InfraBGPSession`             | 4     | full mesh on AS64496 + atl1↔jfk1 on AS8220 |
-| `DemoReachabilityRule`        | 2     | atl-to-jfk-via-as64496, atl-to-dfw-via-as64496 |
-| `DemoReachabilityConstraint`  | 3     | required AS64496 ×2, forbidden AS8220 ×1 |
+| `TopologyReachabilityRule`        | 2     | atl-to-jfk-via-as64496, atl-to-dfw-via-as64496 |
+| `TopologyReachabilityConstraint`  | 3     | required AS64496 ×2, forbidden AS8220 ×1 |
 
 ## The rules
 
@@ -125,8 +125,8 @@ the rule surface is sensitive. The shape:
   the network graph.
 - The "Global read-write" role gets six `CoreObjectPermission` entries,
   all `decision: Deny`:
-  - `Demo:ReachabilityRule:{create,update,delete}`
-  - `Demo:ReachabilityConstraint:{create,update,delete}`
+  - `Topology:ReachabilityRule:{create,update,delete}`
+  - `Topology:ReachabilityConstraint:{create,update,delete}`
 - Super Administrators retain authoring access via their wildcard ALLOW.
 
 To wire this up in the demo: in the UI, navigate to

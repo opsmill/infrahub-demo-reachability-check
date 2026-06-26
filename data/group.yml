@@ -5,4 +5,4 @@ spec:
   kind: CoreStandardGroup
   data:
     - name: reachability-rules
-      description: "Members are DemoReachabilityRule nodes evaluated by the reachability check on every proposed change."
+      description: "Members are TopologyReachabilityRule nodes evaluated by the reachability check on every proposed change."

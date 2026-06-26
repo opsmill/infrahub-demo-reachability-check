@@ -7,7 +7,7 @@ still exists as a minimal placeholder because ``InfrahubCheck`` requires
 ``query`` to be set — but we never actually execute it; the SDK helper builds
 its own GraphQL call and returns a typed ``PathTraversalResult``.
 
-Each member of the targeted group is a ``DemoReachabilityRule``. The runner
+Each member of the targeted group is a ``TopologyReachabilityRule``. The runner
 fans the check out per member and resolves the per-rule path expressions
 declared in ``.infrahub.yml`` into ``self.params``. This check then loads
 the rule with its constraint children and evaluates each returned path
@@ -45,8 +45,8 @@ DEFAULT_PUBLIC_URL = "http://localhost:8000"
 # the GraphQL server rejects excluded_kinds that aren't in the loaded
 # schema.
 EXCLUDED_KINDS: tuple[str, ...] = (
-    "DemoReachabilityRule",
-    "DemoReachabilityConstraint",
+    "TopologyReachabilityRule",
+    "TopologyReachabilityConstraint",
 )
 
 
@@ -164,7 +164,7 @@ class PathAssertionCheck(InfrahubCheck):
             return
 
         rule = await self.client.get(
-            kind="DemoReachabilityRule",
+            kind="TopologyReachabilityRule",
             id=rule_id,
             branch=self.branch_name,
             include=["constraints"],

@@ -1,7 +1,7 @@
 ---
-# Each DemoReachabilityRule pairs two graph nodes (source, destination) and
+# Each TopologyReachabilityRule pairs two graph nodes (source, destination) and
 # carries traversal limits + an enabled flag. The constraints that the path
-# must satisfy live as separate DemoReachabilityConstraint nodes, linked back
+# must satisfy live as separate TopologyReachabilityConstraint nodes, linked back
 # to the rule (see constraints.yml).
 #
 # source and destination have peer: CoreNode, so any node kind works. The
@@ -12,7 +12,7 @@
 apiVersion: infrahub.app/v1
 kind: Object
 spec:
-  kind: DemoReachabilityRule
+  kind: TopologyReachabilityRule
   data:
     - name: edge-pair-multi-asn
       description: "ATL ↔ NYC: must transit ASN 65001 or 65002, never 65999."

@@ -7,7 +7,7 @@ INFRAHUB_ADDRESS / INFRAHUB_API_TOKEN env vars).
 Steps:
   1. Load the network schema (InfraDevice, InfraAutonomousSystem, InfraBGPSession).
   2. Load ASNs, devices, BGP sessions.
-  3. Load the reachability-check schema (DemoReachabilityRule + DemoReachabilityConstraint).
+  3. Load the reachability-check schema (TopologyReachabilityRule + TopologyReachabilityConstraint).
   4. Create the reachability-rules group + two rules with their constraints.
 
 The check itself runs inside Infrahub workers via the `.infrahub.yml`
@@ -107,7 +107,7 @@ async def _seed_rules() -> None:
         source_id = await _resolve(client, spec["source"])
         destination_id = await _resolve(client, spec["destination"])
 
-        existing = await client.filters(kind="DemoReachabilityRule", name__value=spec["name"])
+        existing = await client.filters(kind="TopologyReachabilityRule", name__value=spec["name"])
         if existing:
             rule = existing[0]
             rule.description.value = spec.get("description")
@@ -120,7 +120,7 @@ async def _seed_rules() -> None:
             print(f"updated rule {rule.name.value}")
         else:
             rule = await client.create(
-                kind="DemoReachabilityRule",
+                kind="TopologyReachabilityRule",
                 name=spec["name"],
                 description=spec.get("description"),
                 max_depth=spec.get("max_depth", 8),
@@ -141,7 +141,7 @@ async def _seed_rules() -> None:
 
         for c in spec.get("constraints", []):
             constraint = await client.create(
-                kind="DemoReachabilityConstraint",
+                kind="TopologyReachabilityConstraint",
                 rule=rule.id,
                 polarity=c["polarity"],
                 hop_kind=c["hop_kind"],

@@ -10,7 +10,7 @@
 apiVersion: infrahub.app/v1
 kind: Object
 spec:
-  kind: DemoReachabilityConstraint
+  kind: TopologyReachabilityConstraint
   data:
     - rule: edge-pair-multi-asn
       polarity: any_of

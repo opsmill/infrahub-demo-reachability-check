@@ -4,7 +4,7 @@ version: "1.0"
 
 nodes:
   - name: ReachabilityRule
-    namespace: Demo
+    namespace: Topology
     description: "Assertion that a path between any two graph nodes satisfies a set of hop constraints."
     label: "Reachability Rule"
     icon: "mdi:transit-connection-variant"
@@ -42,24 +42,24 @@ nodes:
         cardinality: one
         optional: false
         kind: Attribute
-        identifier: "demo_reachability_rule__source"
+        identifier: "topology_reachability_rule__source"
         order_weight: 800
       - name: destination
         peer: CoreNode
         cardinality: one
         optional: false
         kind: Attribute
-        identifier: "demo_reachability_rule__destination"
+        identifier: "topology_reachability_rule__destination"
         order_weight: 850
       - name: constraints
-        peer: DemoReachabilityConstraint
+        peer: TopologyReachabilityConstraint
         cardinality: many
         kind: Component
-        identifier: "demo_reachability_rule__constraints"
+        identifier: "topology_reachability_rule__constraints"
         order_weight: 900
 
   - name: ReachabilityConstraint
-    namespace: Demo
+    namespace: Topology
     description: "A single hop predicate evaluated against every returned path."
     label: "Reachability Constraint"
     icon: "mdi:filter-variant"
@@ -152,9 +152,9 @@ nodes:
           jinja2_template: "{{ polarity__value }}:{{ hop_kind__value }}:{{ attribute_name__value or '*' }}={{ attribute_value__value or '*' }}"
     relationships:
       - name: rule
-        peer: DemoReachabilityRule
+        peer: TopologyReachabilityRule
         cardinality: one
         optional: false
         kind: Parent
-        identifier: "demo_reachability_rule__constraints"
+        identifier: "topology_reachability_rule__constraints"
         order_weight: 800

@@ -1,6 +1,6 @@
 """Bootstrap reachability rules + constraints from human-friendly references.
 
-`DemoReachabilityRule.source` and `.destination` are `peer: CoreNode`, so the
+`TopologyReachabilityRule.source` and `.destination` are `peer: CoreNode`, so the
 YAML loader (`infrahubctl object load`) cannot resolve them by hfid — it
 needs UUIDs. This script accepts a list of rules with `kind` + `hfid` for
 source and destination, resolves them via the SDK, and creates / upserts
@@ -82,7 +82,7 @@ async def main() -> None:
         source_id = await resolve(client, spec["source"])
         destination_id = await resolve(client, spec["destination"])
 
-        existing = await client.filters(kind="DemoReachabilityRule", name__value=spec["name"])
+        existing = await client.filters(kind="TopologyReachabilityRule", name__value=spec["name"])
         if existing:
             rule = existing[0]
             rule.description.value = spec.get("description")
@@ -95,7 +95,7 @@ async def main() -> None:
             print(f"updated rule {rule.name.value}")
         else:
             rule = await client.create(
-                kind="DemoReachabilityRule",
+                kind="TopologyReachabilityRule",
                 name=spec["name"],
                 description=spec.get("description"),
                 max_depth=spec.get("max_depth", 8),
@@ -116,7 +116,7 @@ async def main() -> None:
 
         for c in spec.get("constraints", []):
             constraint = await client.create(
-                kind="DemoReachabilityConstraint",
+                kind="TopologyReachabilityConstraint",
                 rule=rule.id,
                 polarity=c["polarity"],
                 hop_kind=c["hop_kind"],
