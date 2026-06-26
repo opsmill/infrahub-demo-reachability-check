@@ -32,6 +32,9 @@ SCHEMAS = [
     "demo-seed/schemas/network.yml",
     "schemas/reachability.yml",
 ]
+MENUS = [
+    "menus/reachability.yml",
+]
 DATA_FILES = [
     "demo-seed/data/01-asns.yml",
     "demo-seed/data/02-devices.yml",
@@ -78,6 +81,8 @@ def _run(cmd: list[str]) -> None:
 def _load_schemas_and_data() -> None:
     for schema in SCHEMAS:
         _run(["infrahubctl", "schema", "load", schema])
+    for menu in MENUS:
+        _run(["infrahubctl", "menu", "load", menu])
     for data in DATA_FILES:
         _run(["infrahubctl", "object", "load", data])
 
