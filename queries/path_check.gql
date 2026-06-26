@@ -10,7 +10,7 @@ query PathCheck(
       destination_id: $destination_id
       max_depth: $max_depth
       max_paths: $max_paths
-      excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint", "InfraPlatform"]
+      excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint"]
     }
   ) {
     paths {

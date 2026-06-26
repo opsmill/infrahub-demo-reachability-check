@@ -37,12 +37,15 @@ FALSEY_STRINGS = frozenset({"false", "no", "0", "off"})
 # between the endpoints and every reachability assertion collapses to a
 # trivial "the rule connects them" path.
 #
-# On the ``main`` branch this tuple also includes ``InfraPlatform``
-# because every device on the same vendor stack would otherwise share
-# a platform node and the traversal would prefer that two-hop shortcut.
-# The live-demo branch ships a minimal schema (no InfraPlatform) so we
-# drop it here. The GraphQL server rejects ``excluded_kinds`` values
-# that are not in the loaded schema.
+# Adopters whose schema has additional shortcut kinds (for example
+# ``InfraPlatform`` in the standard ``models/base`` schemas, or a
+# global ``Tag`` / ``Tenant`` / ``Vendor`` node that cardinality-many-
+# relates to a large slice of the graph) should add those kinds to
+# this tuple AND to the matching list in ``queries/path_check.gql``
+# AND to the ``EXCLUDED_KINDS`` tuple in
+# ``transforms/path_traversal_url.py``. The GraphQL server rejects
+# ``excluded_kinds`` values that are not in the loaded schema, so the
+# default list stays minimal; extend it in your fork.
 EXCLUDED_KINDS: tuple[str, ...] = (
     "TopologyReachabilityRule",
     "TopologyReachabilityConstraint",

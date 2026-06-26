@@ -21,7 +21,7 @@ nodes:
         kind: Text
         optional: true
         order_weight: 2000
-      # Tuning knobs — defaults are good for most rules. Pushed to the
+      # Tuning knobs. Defaults are good for most rules. Pushed to the
       # bottom of the form so users see name / description / source /
       # destination / constraints first.
       - name: max_depth
@@ -89,7 +89,7 @@ nodes:
     attributes:
       - name: polarity
         kind: Dropdown
-        # Default to `required` — the most common constraint in practice.
+        # Default to `required`, the most common constraint in practice.
         # `optional: true` lets the UI accept the default silently.
         default_value: required
         optional: true
@@ -116,10 +116,10 @@ nodes:
         order_weight: 1000
         description: "Schema kind of hop node."
         # Ordered by impact / impressiveness for compliance, impact
-        # assessment and reachability use cases — security headlines
+        # assessment and reachability use cases: security headlines
         # first, then routing-policy assertions, then physical layout.
         choices:
-          # Showcase entry — the standard demo set does not ship a
+          # Showcase entry. The standard demo set does not ship a
           # dedicated firewall kind, so a constraint with this hop_kind
           # will not match anything in the base demo. For real firewall
           # assertions today, use `hop_kind: InfraDevice` +
@@ -159,7 +159,7 @@ nodes:
         optional: true
         description: "Expected attribute value as string. Booleans/ints normalized in the check."
         order_weight: 1200
-      # Computed fingerprint — load-bearing for human_friendly_id and
+      # Computed fingerprint, load-bearing for human_friendly_id and
       # uniqueness_constraints, but the form already hides it (read_only)
       # and the detail view shows it last (order_weight: 5000) so users
       # see the fields they authored before the auto-derived identity.

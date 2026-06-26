@@ -1,43 +1,45 @@
 """Computed-attribute transform that builds the path-traversal URL for a
 TopologyReachabilityRule.
 
-Runs server-side as a ``TransformPython`` computed attribute (Infrahub 1.10+).
-The schema declares ``path_traversal_url`` on the rule with
-``computed_attribute: { kind: TransformPython, transform: path_traversal_url }``,
-and the server invokes this transform whenever the rule (or any attribute it
-depends on) changes. The returned string is stored on the rule and read by the
-check at evaluation time.
+Runs server-side as a ``TransformPython`` computed attribute (Infrahub
+1.10 or later). The schema declares ``path_traversal_url`` on the rule
+with ``computed_attribute: { kind: TransformPython, transform:
+path_traversal_url }``. The server invokes this transform whenever the
+rule (or any attribute it depends on) changes. The returned string is
+stored on the rule and read by the check at evaluation time.
+
+The transform returns a **relative URL** (no scheme or host). The
+Infrahub UI resolves it against the current page, so the same value
+works on ``http://localhost:8000``, ``https://infrahub.your-company.com``,
+or any other deployment URL without any environment configuration. The
+URL is also noticeably shorter than the equivalent absolute form, which
+matters because the value renders on the rule detail page and in every
+verdict log message the check emits.
 
 URL parameters:
-  source         — UUID of the source endpoint
-  destination    — UUID of the destination endpoint
-  depth          — max_depth from the rule
-  maxPaths       — max_paths from the rule
-  excludedKinds  — the rule + constraint kinds (so the traversal page shows
-                   the same hops the check evaluated). Constraint hop_kinds
-                   are NOT excluded — they are exactly the hops we want to
-                   see.
-
-The base URL comes from $INFRAHUB_PUBLIC_URL on the worker (set this in
-production to the operator-facing URL); falls back to http://localhost:8000
-for the standard local dev stack.
+  source         UUID of the source endpoint.
+  destination    UUID of the destination endpoint.
+  depth          ``max_depth`` from the rule.
+  maxPaths       ``max_paths`` from the rule.
+  excludedKinds  The rule and constraint kinds, so the traversal page
+                 shows the same hops the check evaluated. Constraint
+                 hop_kinds are NOT excluded; they are exactly the
+                 hops the rule cares about.
 """
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from infrahub_sdk.transforms import InfrahubTransform
 
-PUBLIC_URL_ENV = "INFRAHUB_PUBLIC_URL"
-DEFAULT_PUBLIC_URL = "http://localhost:8000"
-
-# Kinds excluded from the traversal. The main-branch transform also
-# includes "InfraPlatform" so the URL points the user at the same hops
-# the check used. The live-demo branch runs against a minimal schema
-# without InfraPlatform, so we omit it here to keep the URL aligned
-# with the check's EXCLUDED_KINDS list (see checks/path_assertion.py).
+# Kinds excluded from the traversal URL. Mirrors the check's own
+# ``EXCLUDED_KINDS`` so the link opens the same set of hops the check
+# evaluated. Adopters whose schema has additional "shortcut" kinds (for
+# example ``InfraPlatform`` in the standard ``models/base`` schemas, or
+# a global ``Tag`` / ``Tenant`` / ``Vendor`` node) should add those
+# kinds to this tuple AND to the matching list in
+# ``queries/path_check.gql``.
 EXCLUDED_KINDS: tuple[str, ...] = (
     "TopologyReachabilityRule",
     "TopologyReachabilityConstraint",
@@ -63,7 +65,6 @@ class PathTraversalUrl(InfrahubTransform):
         max_depth = (rule.get("max_depth") or {}).get("value")
         max_paths = (rule.get("max_paths") or {}).get("value")
 
-        base = (os.environ.get(PUBLIC_URL_ENV) or DEFAULT_PUBLIC_URL).rstrip("/")
         parts: list[str] = [f"source={source_id}", f"destination={destination_id}"]
         if max_depth is not None:
             parts.append(f"depth={max_depth}")
@@ -72,4 +73,4 @@ class PathTraversalUrl(InfrahubTransform):
         for kind in EXCLUDED_KINDS:
             parts.append(f"excludedKinds={kind}")
 
-        return f"{base}/path-traversal?{'&'.join(parts)}"
+        return f"/path-traversal?{'&'.join(parts)}"
