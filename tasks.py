@@ -188,7 +188,7 @@ def register_repo(c, address=None, token=None):
 
 
 @task(help={
-    "phase": "One of: data (default), rules, all. Phase 1 (data) loads schemas, the menu, and seed data; phase 2 (rules) creates the rules + constraints. Run register-repo between them.",
+    "phase": "One of: data (default), rules, scenarios, all. Phase 1 (data) loads schemas, the menu, seed data, and the rules group; phase 2 (rules) creates the reachability rules and their constraints; phase 3 (scenarios) creates the three demo branches plus the matching proposed changes. Run register-repo between phases 1 and 2.",
     "address": "Override INFRAHUB_ADDRESS (default: http://localhost:<port>).",
     "token": "Override INFRAHUB_API_TOKEN (default: admin token from .env).",
 })

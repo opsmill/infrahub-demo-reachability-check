@@ -6,30 +6,30 @@ Runs server-side as a ``TransformPython`` computed attribute (Infrahub
 with ``computed_attribute: { kind: TransformPython, transform:
 path_traversal_url }``. The server invokes this transform whenever the
 rule (or any attribute it depends on) changes. The returned string is
-stored on the rule and read by the check at evaluation time.
+stored on the rule.
 
 The transform returns a **relative URL** (no scheme or host). The
 Infrahub UI resolves it against the current page, so the same value
-works on ``http://localhost:8000``, ``https://infrahub.your-company.com``,
-or any other deployment URL without any environment configuration. The
-URL is also noticeably shorter than the equivalent absolute form, which
-matters because the value renders on the rule detail page and in every
-verdict log message the check emits.
+works on ``http://localhost:8000``, on
+``https://infrahub.your-company.com``, or on any other deployment URL
+without any environment configuration. The check does not consume
+this value; it is purely a UI affordance rendered as a clickable
+hyperlink on the rule detail page.
 
 URL parameters:
   source         UUID of the source endpoint.
   destination    UUID of the destination endpoint.
   depth          ``max_depth`` from the rule.
   maxPaths       ``max_paths`` from the rule.
-  excludedKinds  The rule and constraint kinds, so the traversal page
-                 shows the same hops the check evaluated. Constraint
-                 hop_kinds are NOT excluded; they are exactly the
-                 hops the rule cares about.
+  excludedKinds  The rule and constraint node kinds, so the
+                 traversal page shows the same hops the check
+                 evaluated.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlencode
 
 from infrahub_sdk.transforms import InfrahubTransform
 
@@ -39,7 +39,7 @@ from infrahub_sdk.transforms import InfrahubTransform
 # example ``InfraPlatform`` in the standard ``models/base`` schemas, or
 # a global ``Tag`` / ``Tenant`` / ``Vendor`` node) should add those
 # kinds to this tuple AND to the matching list in
-# ``queries/path_check.gql``.
+# ``checks/path_assertion.py``.
 EXCLUDED_KINDS: tuple[str, ...] = (
     "TopologyReachabilityRule",
     "TopologyReachabilityConstraint",
@@ -65,12 +65,19 @@ class PathTraversalUrl(InfrahubTransform):
         max_depth = (rule.get("max_depth") or {}).get("value")
         max_paths = (rule.get("max_paths") or {}).get("value")
 
-        parts: list[str] = [f"source={source_id}", f"destination={destination_id}"]
+        # urlencode handles escaping for IDs and kind names that might
+        # contain ``&``, ``=``, ``#``, ``+``, or whitespace. The
+        # `doseq=True` flag means we can pass the repeated
+        # ``excludedKinds`` parameter as one list entry per kind.
+        params: list[tuple[str, Any]] = [
+            ("source", source_id),
+            ("destination", destination_id),
+        ]
         if max_depth is not None:
-            parts.append(f"depth={max_depth}")
+            params.append(("depth", max_depth))
         if max_paths is not None:
-            parts.append(f"maxPaths={max_paths}")
+            params.append(("maxPaths", max_paths))
         for kind in EXCLUDED_KINDS:
-            parts.append(f"excludedKinds={kind}")
+            params.append(("excludedKinds", kind))
 
-        return f"/path-traversal?{'&'.join(parts)}"
+        return f"/path-traversal?{urlencode(params, doseq=True)}"

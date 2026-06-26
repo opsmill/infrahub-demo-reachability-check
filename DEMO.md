@@ -134,7 +134,8 @@ AS8220 (Colt). One field. No new objects.
                                 with asn=8220 present.
    ```
 
-5. Click the `Inspect in UI:` URL on the FAIL card. It opens
+5. Open the rule `atl-to-jfk-via-as64496` in the UI and click the
+   `path_traversal_url` link on the detail page. It opens
    `/path-traversal` pre-filtered to the same source, destination,
    depth, and excluded-kinds the check evaluated. The URL is the value
    of `rule.path_traversal_url`, computed server-side by the
@@ -205,8 +206,7 @@ differs in the following ways:
 | Runner                        | n/a                                 | `uv run invoke demo.start / demo.init`     |
 
 The check semantics are identical. `Required hop` (required) is
-existence-based, `Forbidden hop` (forbidden) is global, and `Any-of hop`
-(any_of) is existence-based per path.
+existence-based and `Forbidden hop` (forbidden) is a global invariant.
 
 ## Tear down
 

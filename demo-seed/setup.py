@@ -34,6 +34,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from infrahub_sdk import Config, InfrahubClient
 
@@ -296,7 +297,10 @@ async def _seed_scenarios() -> None:
         if await _existing_branch(client, branch_name):
             print(f"branch {branch_name} already exists")
         else:
-            await client.branch.create(branch_name=branch_name, sync_with_git=True)
+            # ``sync_with_git=False``: these demo branches mutate data
+            # only; no git commit is authored on them, so triggering a
+            # git import workflow per branch is pure latency.
+            await client.branch.create(branch_name=branch_name, sync_with_git=False)
             print(f"created branch {branch_name}")
 
         for edit in scenario["edits"]:
