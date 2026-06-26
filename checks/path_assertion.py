@@ -21,6 +21,21 @@ The runner extracts only the rule id from each member, and the check
 fetches the rule together with its constraint children. Source,
 destination, max_depth, max_paths, and enabled are then read directly
 off the rule node.
+
+Production tuning
+-----------------
+Every outbound SDK call carries an explicit ``timeout`` so a slow
+database cannot tie up a check worker indefinitely, and a ``tracker``
+identifier so the call shows up in the Prefect / Infrahub run tree
+under a meaningful name (look for ``reachability-check-*`` in worker
+logs). One outbound call per concern:
+
+  ``client.get``              - load the rule + constraints
+  ``client.traverse_paths``   - find the paths between the endpoints
+  ``client.execute_graphql``  - batched attribute fetch across all hop kinds
+
+The check therefore costs three network round-trips per rule
+regardless of how many constraint kinds the rule references.
 """
 
 from __future__ import annotations
@@ -31,6 +46,14 @@ from typing import Any
 from infrahub_sdk.checks import InfrahubCheck
 from infrahub_sdk.graph_traversal import Path, PathTraversalResult
 from infrahub_sdk.node import InfrahubNode
+
+# Tunable per-call timeout for every SDK round-trip the check makes.
+# Override via the ``INFRAHUB_REACHABILITY_CHECK_TIMEOUT`` env var if
+# your environment needs a different budget; the default of 60s is
+# generous for the default depth=8 / max_paths=50 traversal.
+import os
+
+CHECK_REQUEST_TIMEOUT: int = int(os.environ.get("INFRAHUB_REACHABILITY_CHECK_TIMEOUT", "60"))
 
 FALSEY_STRINGS = frozenset({"false", "no", "0", "off"})
 
@@ -55,11 +78,16 @@ EXCLUDED_KINDS: tuple[str, ...] = (
 
 
 def _is_disabled(value: Any) -> bool:
-    """Return True when ``enabled`` should be treated as disabled.
+    """Return ``True`` when a rule's ``enabled`` flag should be treated as disabled.
 
-    The ``enabled`` field is a Boolean attribute on the rule, but the
-    check can also be invoked through ``infrahubctl check key=value``
-    where it arrives as a string. Both forms are handled.
+    The ``enabled`` field on the rule is a Boolean attribute, so the
+    value is normally a Python ``bool``. The same check is also
+    invokable through ``infrahubctl check rule_id=... enabled=...``,
+    which passes parameters as strings. This helper accepts both
+    forms: ``False``, the literal strings ``"false"`` / ``"no"`` /
+    ``"0"`` / ``"off"`` (case-insensitive, with surrounding
+    whitespace stripped) all mean disabled. Everything else, including
+    a missing ``None`` value, means enabled.
     """
     if value is False:
         return True
@@ -69,11 +97,15 @@ def _is_disabled(value: Any) -> bool:
 
 
 def _normalize(value: Any) -> str:
-    """Stringify for hop-attribute comparison.
+    """Stringify a value the same way on both sides of an attribute comparison.
 
-    Booleans render lower-case so a Text ``attribute_value`` of
-    ``"true"`` or ``"false"`` matches a Python bool. Everything else
-    uses plain ``str()``.
+    Constraints store ``attribute_value`` as text (the schema's
+    ``attribute_value`` field is ``kind: Text``). Hop attribute values
+    fetched from the graph come back with their native types - bool,
+    int, str, etc. To compare apples to apples, both sides are passed
+    through this helper before equality: booleans render as lowercase
+    ``"true"`` / ``"false"`` to match the text the user typed; every
+    other type uses ``str()`` as-is.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -81,6 +113,14 @@ def _normalize(value: Any) -> str:
 
 
 def _coerce_int(value: Any) -> int | None:
+    """Return ``value`` as an ``int`` if convertible, else ``None``.
+
+    Used to massage the rule's ``max_depth`` and ``max_paths`` values
+    before they are passed to ``traverse_paths``. The SDK accepts
+    ``None`` (and falls back to its own defaults) but reasonably rejects
+    Boolean / non-numeric inputs, so any unconvertible value is mapped
+    to ``None`` rather than raising mid-check.
+    """
     if value is None:
         return None
     if isinstance(value, bool):
@@ -94,6 +134,18 @@ def _coerce_int(value: Any) -> int | None:
 
 
 class PathAssertionCheck(InfrahubCheck):
+    """Per-rule check: assert that the rule's path predicates hold on this branch.
+
+    Registered as a ``CoreCheckDefinition`` with
+    ``targets: reachability-rules`` and parameters
+    ``rule_id: "id"`` in ``.infrahub.yml``. The Infrahub check runner
+    fans the check out one invocation per ``TopologyReachabilityRule``
+    member of the group, passing only the rule id into
+    ``self.params``. The check then loads the rule, runs the path
+    traversal, fetches the hop attributes the constraints reference,
+    and writes one log entry per finding plus a summary line.
+    """
+
     # ``query`` is required by ``InfrahubCheck.__init__`` and the
     # ``CoreCheckDefinition`` repo-sync flow. A stored ``path_check``
     # query is registered in ``.infrahub.yml`` so the check passes
@@ -109,6 +161,21 @@ class PathAssertionCheck(InfrahubCheck):
     _traversal_result: PathTraversalResult | None = None
 
     async def collect_data(self) -> dict:
+        """Load the rule and run the path traversal.
+
+        Returns a small ``dict`` whose keys act as sentinels for
+        ``validate``. A successful run returns ``{"_ok": True}`` and
+        leaves the loaded rule on ``self._rule`` and the traversal
+        result on ``self._traversal_result`` for ``validate`` to read.
+        Early-exit sentinels:
+
+          ``_no_rule_id``       - the runner did not pass ``rule_id``.
+          ``_disabled``         - the rule's ``enabled`` flag is off.
+          ``_missing_endpoints`` - source or destination is null on the rule.
+          ``_self_loop``        - source and destination resolve to the same node.
+
+        Each sentinel maps one-to-one to a branch in ``validate``.
+        """
         rule_id = self.params.get("rule_id")
         if not rule_id:
             return {"_no_rule_id": True}
@@ -119,6 +186,7 @@ class PathAssertionCheck(InfrahubCheck):
             branch=self.branch_name,
             include=["constraints"],
             prefetch_relationships=True,
+            timeout=CHECK_REQUEST_TIMEOUT,
         )
         self._rule = rule
 
@@ -148,10 +216,28 @@ class PathAssertionCheck(InfrahubCheck):
             max_paths=_coerce_int(rule.max_paths.value),
             excluded_kinds=list(EXCLUDED_KINDS),
             branch=self.branch_name,
+            timeout=CHECK_REQUEST_TIMEOUT,
         )
         return {"_ok": True}
 
     async def validate(self, data: dict) -> None:
+        """Evaluate the constraints against the paths and emit verdict log entries.
+
+        ``data`` is the dict returned by ``collect_data``. Early-exit
+        sentinels are handled first (rule id missing, rule disabled,
+        endpoints missing, self-loop). Otherwise the constraints are
+        partitioned into ``required`` and ``forbidden`` and each
+        returned path is scored:
+
+          - any path whose hops include a ``forbidden`` match fails the
+            check immediately (``forbidden`` is a global invariant);
+          - if at least one path satisfies every ``required`` hop, the
+            rule passes; otherwise per-path requirement violations are
+            emitted.
+
+        Verdict cards in the Infrahub UI aggregate ``log_info`` and
+        ``log_error`` entries from this method.
+        """
         if data.get("_no_rule_id"):
             self.log_error(message="Rule id was not extracted into params; cannot load rule.")
             return
@@ -252,7 +338,16 @@ class PathAssertionCheck(InfrahubCheck):
         )
 
     def _validate_constraint_authoring(self, constraints: list[Any]) -> bool:
-        """Surface authoring mistakes that would silently make constraints no-ops."""
+        """Surface authoring mistakes that would silently turn constraints into no-ops.
+
+        A constraint with an unknown polarity, an empty ``hop_kind``,
+        or an ``attribute_name`` set without an ``attribute_value``
+        would match nothing at evaluation time and the operator would
+        wonder why the rule appeared to pass. This helper logs each
+        such mistake as an error so the verdict card calls it out
+        explicitly. Returns ``False`` when at least one mistake was
+        found so ``validate`` aborts before attempting evaluation.
+        """
         ok = True
         for c in constraints:
             polarity = c.polarity.value
@@ -270,6 +365,15 @@ class PathAssertionCheck(InfrahubCheck):
         return ok
 
     def _hop_matches(self, hop_node: Any, constraint: Any, attr_values: dict) -> bool:
+        """Return ``True`` if a single hop satisfies a single constraint.
+
+        A constraint matches a hop when the hop's schema kind equals
+        ``constraint.hop_kind``. If the constraint also names an
+        ``attribute_name``, the hop node's value for that attribute
+        (looked up in the prefetched ``attr_values`` table) must
+        equal ``constraint.attribute_value`` after both sides are
+        passed through ``_normalize``.
+        """
         if hop_node.kind != constraint.hop_kind.value:
             return False
         attribute_name = constraint.attribute_name.value
@@ -281,6 +385,13 @@ class PathAssertionCheck(InfrahubCheck):
         return _normalize(actual) == _normalize(constraint.attribute_value.value)
 
     def _describe(self, constraint: Any) -> str:
+        """Render a constraint as a short, human-readable phrase.
+
+        Used to compose verdict messages such as
+        "forbidden hop of kind InfraAutonomousSystem with asn=8220 present".
+        When ``attribute_name`` is unset the description collapses to
+        "hop of kind <kind>".
+        """
         attribute_name = constraint.attribute_name.value
         if attribute_name is None:
             return f"hop of kind {constraint.hop_kind.value}"
@@ -298,20 +409,20 @@ class PathAssertionCheck(InfrahubCheck):
 
         For each constraint whose ``attribute_name`` is set, the check
         needs the value of that attribute on every returned hop of the
-        constraint's ``hop_kind``. The previous implementation issued one
-        ``client.filters`` call per distinct hop kind and ran them
+        constraint's ``hop_kind``. A naive implementation would issue
+        one ``client.filters`` call per distinct hop kind and run them
         concurrently. Production deployments fan the check out across
-        many rules per proposed change, and at scale even concurrent
-        per-kind round-trips dominate the check's wall-clock time.
+        many rules per proposed change, so this implementation
+        consolidates all kinds into a single GraphQL operation with one
+        aliased block per kind, drives it through
+        ``InfrahubClient.execute_graphql``, and hydrates each result
+        through ``InfrahubNode.from_graphql`` for typed attribute
+        access. Hop ids ride as bound ``[ID]`` variables; kind and
+        attribute names come from the schema and are
+        GraphQL-identifier-safe by construction.
 
-        This implementation builds one GraphQL query with one aliased
-        block per hop kind, drives it with ``InfrahubClient.execute_graphql``,
-        and hydrates each result through ``InfrahubNode.from_graphql`` so
-        the attribute values are read through the typed SDK node rather
-        than off raw dictionaries. Hop ids ride as GraphQL variables;
-        kind and attribute names come from the schema and are
-        GraphQL-identifier-safe by construction (the schema would reject
-        anything else at load time).
+        Returns a mapping ``(kind, attribute_name, node_id) -> value``
+        that ``_hop_matches`` looks up by tuple.
         """
         needed: dict[str, set[str]] = defaultdict(set)
         for constraint in constraints:
@@ -353,6 +464,7 @@ class PathAssertionCheck(InfrahubCheck):
             variables=variables,
             branch_name=self.branch_name,
             tracker="reachability-check-fetch-hop-attributes",
+            timeout=CHECK_REQUEST_TIMEOUT,
         )
 
         out: dict[tuple[str, str, str], Any] = {}
@@ -361,7 +473,10 @@ class PathAssertionCheck(InfrahubCheck):
             edges = block.get("edges") or []
             for edge in edges:
                 node = await InfrahubNode.from_graphql(
-                    client=self.client, branch=self.branch_name, data=edge
+                    client=self.client,
+                    branch=self.branch_name,
+                    data=edge,
+                    timeout=CHECK_REQUEST_TIMEOUT,
                 )
                 for attribute_name in needed[kind]:
                     attribute = getattr(node, attribute_name, None)

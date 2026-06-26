@@ -42,6 +42,14 @@ ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"
 
 
 def _docker_env() -> dict[str, str]:
+    """Build the environment passed to every subprocess driven by these tasks.
+
+    Forwards the current process env and back-fills
+    ``INFRAHUB_ADDRESS`` and ``INFRAHUB_API_TOKEN`` from the defaults
+    (``http://localhost:<port>`` and the admin token baked into
+    ``.env``) so adopters do not have to source the env file before
+    every invoke command.
+    """
     env = os.environ.copy()
     env.setdefault("INFRAHUB_ADDRESS", INFRAHUB_URL)
     env.setdefault("INFRAHUB_API_TOKEN", ADMIN_TOKEN)
@@ -116,7 +124,14 @@ def prepare_repo_source(c):
 
 @task(help={"wait": "Wait until infrahub-server returns 200 on /api/config."})
 def start(c, wait=True):
-    """Bring the Infrahub 1.10 stack up."""
+    """Boot the Infrahub 1.10 stack with the bind-mounted bare clone in place.
+
+    Rebuilds ``./.demo-bare/`` (the read-only repo the worker mounts
+    over ``file:///srv/reachability``) and runs ``docker compose up
+    -d``. Polls the infrahub-server's ``/api/config`` endpoint for
+    up to 5 minutes and exits non-zero if the stack never becomes
+    healthy.
+    """
     _prepare_bare_clone()
     c.run("docker compose up -d", pty=False, env=_docker_env())
     if not wait:
@@ -137,19 +152,19 @@ def start(c, wait=True):
 
 @task
 def stop(c):
-    """docker compose down (preserves volumes)."""
+    """Stop every container without touching the docker volumes (graph data survives)."""
     c.run("docker compose down", pty=False, env=_docker_env())
 
 
 @task
 def reset(c):
-    """docker compose down -v (wipes the database, storage, workflow state)."""
+    """Stop every container and wipe the docker volumes. Database, storage, workflow state all gone."""
     c.run("docker compose down -v", pty=False, env=_docker_env())
 
 
 @task
 def status(c):
-    """Print docker compose ps + a /api/config probe."""
+    """Print ``docker compose ps`` plus a probe of the Infrahub ``/api/config`` endpoint."""
     c.run("docker compose ps", pty=False, env=_docker_env())
     print()
     try:
@@ -161,7 +176,7 @@ def status(c):
 
 @task
 def logs(c, service="infrahub-server", tail=200, follow=False):
-    """Tail logs for one of the stack services."""
+    """Tail logs for one of the docker-compose services. Pass ``--service task-worker`` to chase a sync."""
     flag = "-f " if follow else ""
     c.run(f"docker compose logs {flag}--tail={tail} {service}", pty=True, env=_docker_env())
 
@@ -171,13 +186,16 @@ def logs(c, service="infrahub-server", tail=200, follow=False):
     "token": "Override INFRAHUB_API_TOKEN (default: admin token from .env).",
 })
 def register_repo(c, address=None, token=None):
-    """Register this branch as a CoreRepository.
+    """Register the live-demo branch as a CoreRepository so the transform installs.
 
-    Required for the path_traversal_url Python transform to install
-    on the running stack. The gitserver container in docker-compose
-    serves this repository read-only on git://gitserver/reachability;
-    this task points a CoreRepository at it and waits for the worker
-    to finish parsing .infrahub.yml.
+    The Infrahub ``TransformPython`` that backs ``path_traversal_url``
+    only fires after Infrahub processes ``.infrahub.yml`` via a
+    registered ``CoreRepository``. The task-worker container in
+    ``docker-compose.yml`` mounts this repository's single-branch
+    bare clone read-only at ``/srv/reachability``; this task points
+    a ``CoreRepository`` at it (via ``file:///srv/reachability``)
+    and polls until both ``CoreTransformPython(path_traversal_url)``
+    and ``CoreCheckDefinition(reachability_assertion)`` exist.
     """
     env = _docker_env()
     if address:
@@ -193,7 +211,18 @@ def register_repo(c, address=None, token=None):
     "token": "Override INFRAHUB_API_TOKEN (default: admin token from .env).",
 })
 def init(c, phase="data", address=None, token=None):
-    """Run a seed phase. Phase 1 (data) loads schemas, the menu, and seed data; phase 2 (rules) creates the rules."""
+    """Run one of the three seed phases against a running Infrahub stack.
+
+    The phases must run in this order:
+      1. ``data``       schemas + menu + ASN / device / BGP seed + group.
+      2. ``rules``      create the two reachability rules and their constraints.
+      3. ``scenarios``  create the three demo branches and proposed changes.
+
+    Run ``demo.register-repo`` between phases 1 and 2 so the
+    ``CoreCheckDefinition`` repo-sync finds the rules group already
+    created. Pass ``--phase all`` to run all three back-to-back
+    (only valid after the repo has been registered).
+    """
     env = _docker_env()
     if address:
         env["INFRAHUB_ADDRESS"] = address
@@ -205,11 +234,27 @@ def init(c, phase="data", address=None, token=None):
 
 @task
 def up(c):
-    """Convenience: start + init(data) + register-repo + init(rules) in one go."""
+    """One-shot demo bootstrap: start, register the repo, seed data, rules, and scenarios.
+
+    Equivalent to running, in order::
+
+        uv run invoke demo.start
+        uv run invoke demo.init --phase data
+        uv run invoke demo.register-repo
+        uv run invoke demo.init --phase rules
+        uv run invoke demo.init --phase scenarios
+
+    On a healthy machine ``demo.up`` takes 1-2 minutes; the
+    register-repo wait dominates. After it finishes, three open
+    proposed changes are visible in the UI (Sofia / Chloe /
+    Administrator) and ``path_traversal_url`` is populated on
+    every rule.
+    """
     start(c)
     init(c, phase="data")
     register_repo(c)
     init(c, phase="rules")
+    init(c, phase="scenarios")
 
 
 demo = Collection("demo")

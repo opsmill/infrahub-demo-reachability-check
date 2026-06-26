@@ -40,10 +40,15 @@ POLL_INTERVAL_SECONDS = 5
 
 
 def _register_via_ctl(location: str) -> None:
-    # The served bare clone exposes a single git branch named ``main``
-    # (see tasks.py:_prepare_bare_clone), so no ``--ref`` argument is
-    # needed: Infrahub's default branch maps to the only branch
-    # present in the served repo.
+    """Shell out to ``infrahubctl repository add`` for the live-demo repo.
+
+    The served bare clone (see ``tasks.py:_prepare_bare_clone``)
+    exposes a single git branch renamed to ``main``, so no ``--ref``
+    argument is needed; Infrahub's default branch maps to the only
+    branch present in the served repo. The subprocess is invoked
+    with ``check=True`` so any non-zero exit from ``infrahubctl``
+    surfaces as a ``CalledProcessError`` and stops the script.
+    """
     cmd = [
         "infrahubctl",
         "repository",
@@ -56,6 +61,12 @@ def _register_via_ctl(location: str) -> None:
 
 
 async def _existing_repo(client: InfrahubClient) -> Any | None:
+    """Return the existing ``reachability-check`` repository, or ``None``.
+
+    Used to make the register step idempotent: a re-run after the
+    repository is already registered prints a "skipping add" notice
+    and proceeds straight to waiting on the sync artefacts.
+    """
     matches = await client.filters(kind="CoreRepository", name__value=REPOSITORY_NAME)
     return matches[0] if matches else None
 
@@ -102,6 +113,24 @@ async def _wait_for_sync_artifacts(client: InfrahubClient) -> None:
 
 
 async def main() -> None:
+    """Entry point. Registers the CoreRepository and waits for the sync.
+
+    Steps, in order:
+      1. Validate that ``INFRAHUB_ADDRESS`` and
+         ``INFRAHUB_API_TOKEN`` are exported.
+      2. If a ``CoreRepository`` named ``reachability-check``
+         already exists, skip the create.
+      3. Otherwise run ``infrahubctl repository add`` against the
+         ``LIVE_DEMO_REPO_URL`` (defaulting to
+         ``file:///srv/reachability``, served by the task-worker
+         bind mount).
+      4. Poll until ``CoreTransformPython(path_traversal_url)``
+         AND ``CoreCheckDefinition(reachability_assertion)`` both
+         exist, which is the signal that the task worker has
+         finished parsing ``.infrahub.yml`` on the synced branch.
+
+    Driven by the ``uv run invoke demo.register-repo`` task.
+    """
     address = os.environ.get("INFRAHUB_ADDRESS")
     token = os.environ.get("INFRAHUB_API_TOKEN")
     if not address or not token:

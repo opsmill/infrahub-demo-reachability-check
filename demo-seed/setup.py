@@ -90,11 +90,28 @@ RULES: list[dict] = [
 
 
 def _run(cmd: list[str]) -> None:
+    """Echo a shell command and run it through ``subprocess.run(check=True)``.
+
+    Used to drive ``infrahubctl`` subprocesses during phase 1
+    (``data``). The command is printed verbatim before it runs so
+    operators can see exactly what the script is doing if the demo
+    bootstrap fails mid-step.
+    """
     print("$", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True, cwd=REPO_ROOT)
 
 
 def _load_schemas_and_data() -> None:
+    """Phase 1 entry point: install schemas, the menu, seed data, and the group.
+
+    Drives ``infrahubctl schema load`` for the network schema and the
+    reachability schema, ``infrahubctl menu load`` for the sidebar
+    entry, ``infrahubctl object load`` for the demo ASNs / devices /
+    BGP sessions, and finally creates the ``reachability-rules``
+    ``CoreStandardGroup`` over the SDK so the
+    ``CoreCheckDefinition`` repo-sync that runs in phase
+    ``register-repo`` finds the group already in place.
+    """
     for schema in SCHEMAS:
         _run(["infrahubctl", "schema", "load", schema])
     for menu in MENUS:
@@ -128,11 +145,30 @@ async def _ensure_group() -> None:
 
 
 async def _resolve(client: InfrahubClient, ref: dict) -> str:
+    """Resolve a ``{kind, hfid}`` reference into the matching node's UUID.
+
+    Demo rules reference their source / destination by hfid
+    (``atl1-edge1`` etc.) because that is the form a human would
+    type. The SDK's ``client.get(hfid=...)`` does the lookup and
+    returns the typed node; this helper just unwraps ``.id``.
+    """
     node = await client.get(kind=ref["kind"], hfid=[ref["hfid"]])
     return node.id
 
 
 async def _seed_rules() -> None:
+    """Phase 2 entry point: create the demo rules and their constraints.
+
+    For every entry in ``RULES`` the function resolves the source and
+    destination hfids to UUIDs, upserts the
+    ``TopologyReachabilityRule`` with the rule's tuning knobs
+    (max_depth / max_paths / enabled), adds the rule to the
+    ``reachability-rules`` group, deletes any pre-existing
+    constraints attached to it, then creates one
+    ``TopologyReachabilityConstraint`` per entry under
+    ``spec['constraints']``. Idempotent: re-runnable after a previous
+    seed without producing duplicates.
+    """
     client = InfrahubClient(
         config=Config(
             address=os.environ["INFRAHUB_ADDRESS"],
@@ -255,6 +291,13 @@ SCENARIOS: list[dict] = [
 
 
 async def _existing_branch(client: InfrahubClient, name: str) -> bool:
+    """Return ``True`` if an Infrahub branch with this name already exists.
+
+    Used by ``_seed_scenarios`` so re-running the scenarios phase
+    after a successful first run is a no-op instead of an error.
+    Tolerates both the dict-return and list-return shapes of
+    ``client.branch.all()`` across SDK versions.
+    """
     branches = await client.branch.all()
     if isinstance(branches, dict):
         return name in branches
@@ -262,6 +305,16 @@ async def _existing_branch(client: InfrahubClient, name: str) -> bool:
 
 
 async def _apply_edit(client: InfrahubClient, branch: str, edit: dict) -> None:
+    """Apply a single-field edit to a node on a given branch.
+
+    Each ``edit`` is a dict that names the target node by
+    ``{kind, hfid}`` and supplies the changes as ``attributes``
+    (scalar attribute writes) and / or ``relationships``
+    (cardinality-one relationship reassignments by peer hfid). The
+    function loads the node on the branch, applies every field, and
+    saves once. Demo scenarios use the single-field variant; the
+    helper supports multi-field edits for future scenarios.
+    """
     node = await client.get(kind=edit["kind"], hfid=[edit["hfid"]], branch=branch)
     for attribute_name, value in edit.get("attributes", {}).items():
         attribute = getattr(node, attribute_name)
@@ -273,6 +326,13 @@ async def _apply_edit(client: InfrahubClient, branch: str, edit: dict) -> None:
 
 
 async def _existing_pc(client: InfrahubClient, name: str) -> Any | None:
+    """Return the existing ``CoreProposedChange`` with this name, or ``None``.
+
+    Lookup by ``name__value`` because ``name`` is the only field the
+    scenarios bootstrap controls. Used to make ``_seed_scenarios``
+    idempotent: a second pass skips PCs that already exist instead of
+    creating duplicates.
+    """
     matches = await client.filters(kind="CoreProposedChange", name__value=name)
     return matches[0] if matches else None
 
@@ -323,6 +383,19 @@ async def _seed_scenarios() -> None:
 
 
 def main() -> None:
+    """Entry point. Dispatches to the phase named by ``DEMO_INIT_PHASE``.
+
+    Recognised phases:
+      ``data``       Load schemas + menu + seed data + the rules group.
+      ``rules``      Create the demo rules and their constraints.
+      ``scenarios``  Create the demo branches and proposed changes.
+      ``all``        All three, in order.
+
+    Driven from ``tasks.py``'s ``demo.init`` invoke task, which sets
+    ``DEMO_INIT_PHASE`` based on the ``--phase`` argument. Requires
+    ``INFRAHUB_ADDRESS`` and ``INFRAHUB_API_TOKEN`` in the
+    environment; the invoke task exports both from ``.env`` by default.
+    """
     if "INFRAHUB_ADDRESS" not in os.environ or "INFRAHUB_API_TOKEN" not in os.environ:
         print(
             "ERROR: INFRAHUB_ADDRESS and INFRAHUB_API_TOKEN must be exported.\n"
