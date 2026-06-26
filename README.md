@@ -1,11 +1,32 @@
 # Reachability Check via Graph Traversal
 
+## What is it?
+
+A way to write down the rule *"this must connect to that, only
+through these approved points, and never through those"* once — and
+have it re-checked automatically every time anything in your
+environment changes. Before a change goes live, you get a yes/no per
+rule and a one-click view of exactly where a "no" would happen.
+
+## Why should I care?
+
+Most organizations rely on rules that live only in senior people's
+heads — *"customer traffic must never bypass the inspection layer"*,
+*"EU data must stay in the EU"*, *"the audit data store is never
+reachable from the guest network"*. When a change quietly breaks one
+of those rules, the failure shows up late: a midnight outage, a
+failed audit, a regulator letter, a customer call. This pattern
+catches it at review time instead — before anyone hits "merge" — so
+the rule survives staff turnover and stays current as the business
+grows.
+
 **Reachability is a topology notation, not a network-only idea.** Any
-time your source of truth is a graph (network topology, compliance
-flows, security zones, link capacity, service dependencies), the
-question "does *X* reach *Y* subject to these constraints?" has the
-same shape. This repository turns that question into a first-class
-Infrahub object, evaluated on every proposed change.
+time your source of truth is a graph (network topology, regulatory
+scope boundaries, security zones, agent delegation chains, service
+dependencies, link capacity), the question "does *X* reach *Y*
+subject to these constraints?" has the same shape. This repository
+turns that question into a first-class Infrahub object, evaluated on
+every proposed change.
 
 📺 **Walkthrough video:** [Reachability Check via Graph Traversal on YouTube](https://www.youtube.com/watch?v=guyEHTsqruI).
 
@@ -52,6 +73,9 @@ a wide family of operational questions. Some examples:
 | **Capacity reachability**    | "Atlanta must reach NYC with at least 10 Gb/s of usable capacity along the path." |
 | **Tenant & zone segmentation** | "Tenant A's data plane is never reachable from tenant B's, at any depth." |
 | **Service & dependency graphs** | "Order-service must reach payment-service via approved internal APIs only." |
+| **Regulatory-scope segmentation** | "No out-of-scope system can reach the cardholder-data store at any depth, and Level-4 IT never reaches a Level-1 PLC except via the IDMZ." |
+| **Lateral-movement containment** | "From any compromised endpoint, the crown-jewel database remains unreachable without transiting a PAM jump host." |
+| **AI agent capability delegation** | "An untrusted agent cannot reach a privileged tool (payment, prod-deploy, file-write) through any MCP/A2A delegation chain." |
 | **Continuous compliance audits** | "Every rule, every proposed change, with a full diffable history." |
 
 All of these are the same notation pointed at different parts of the
@@ -201,6 +225,9 @@ redundancy), not rebuilding the pipeline:
 | **Latency & SLA bounds**       | within: N hops · constraints: transit low-latency                          |
 | **Maintenance drain safety**   | require: reroute before drain                                              |
 | **Service & dependency graphs** | constraints: only via approved internal APIs                              |
+| **Regulatory-scope segmentation (PCI · HIPAA · OT/Purdue)** | forbidden: any path from out-of-scope kind reaches regulated-data store    |
+| **Lateral-movement blast radius** | from: compromised node · forbidden: reach crown-jewel kind without PAM/PEP transit |
+| **AI agent capability delegation** | source: agent · destination: privileged tool · forbidden: untrusted delegation hop |
 | **Dependency & blast-radius**  | reachable from: node · target kinds                                        |
 | **Change impact assessment**   | diff: reachable paths · before vs after                                    |
 | **Continuous compliance**      | policy holds · on every change                                             |
