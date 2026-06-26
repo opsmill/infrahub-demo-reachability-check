@@ -298,6 +298,49 @@ Why this matters:
   constraint fingerprint) by editing the transform alone. No check
   change is required.
 
+### Why is `path_traversal_url` empty on my rules?
+
+A `TransformPython` computed attribute only fires after Infrahub has
+processed this repository's `.infrahub.yml`. That processing happens
+exclusively through a registered `CoreRepository`. If you have not yet
+registered this repository, the `path_traversal_url` attribute exists
+on the schema but stays `null` on every rule, and the check's verdict
+message has no `Inspect in UI:` line. You can confirm this in the
+GraphQL playground:
+
+```graphql
+{
+  CoreRepository { count }
+  CoreTransformPython(name__value: "path_traversal_url") { count }
+}
+```
+
+Both counts return `0` when no `CoreRepository` is registered.
+
+To populate the value, register the repository:
+
+1. Push this repository to a git remote the Infrahub task workers can
+   reach (a private or public GitHub or GitLab URL, a self-hosted
+   Gitea, or any other git server). A `file://` URL pointing at a path
+   that is bind-mounted into the worker container is also valid; see
+   the `live-demo` branch for a working example.
+2. Run `infrahubctl repository add reachability-check <URL>` (the SDK
+   and UI offer the same operation). Optionally pass `--ref <branch>`
+   if you do not want the worker to track the repository's default
+   branch.
+3. The task workers clone the repository, parse `.infrahub.yml`, and
+   create the `CoreTransformPython`, `CoreGraphQLQuery`, and
+   `CoreCheckDefinition` objects. From this moment on, every rule
+   create or update fires the transform server-side and the
+   `path_traversal_url` attribute is populated.
+
+The `live-demo` branch automates all of this against a local docker
+stack. It bind-mounts a single-branch bare clone of the repository
+into the task-worker container and runs `infrahubctl repository add
+reachability-check file:///srv/reachability` from a
+`uv run invoke demo.register-repo` task. No external git host is
+required. See `DEMO.md` on that branch for the exact sequence.
+
 ## How to deploy this in your Infrahub
 
 The example references device hfids (such as `atl1-edge1`). Replace

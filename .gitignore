@@ -4,3 +4,7 @@ __pycache__/
 # Local docker-compose overrides (e.g. host port mapping) — keep these
 # out of the upstream repo.
 docker-compose.override.yml
+
+# Single-branch bare clone used by the live-demo branch's docker-compose
+# stack. Never committed.
+.demo-bare/
