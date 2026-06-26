@@ -31,7 +31,7 @@ GROUP_NAME = "reachability-rules"
 RULES: list[dict] = [
     {
         "name": "atl-to-jfk-via-as64496",
-        "description": "atl1-edge1 ↔ jfk1-edge1 must transit AS 64496.",
+        "description": "atl1-edge1 ↔ jfk1-edge1 must transit AS64496.",
         "source": {"kind": "InfraDevice", "hfid": "atl1-edge1"},
         "destination": {"kind": "InfraDevice", "hfid": "jfk1-edge1"},
         "max_depth": 3,
@@ -44,7 +44,7 @@ RULES: list[dict] = [
     },
     {
         "name": "atl-to-dfw-via-as64496",
-        "description": "atl1-edge1 ↔ dfw1-edge1 must transit AS 64496.",
+        "description": "atl1-edge1 ↔ dfw1-edge1 must transit AS64496.",
         "source": {"kind": "InfraDevice", "hfid": "atl1-edge1"},
         "destination": {"kind": "InfraDevice", "hfid": "dfw1-edge1"},
         "max_depth": 3,
