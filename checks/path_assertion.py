@@ -25,12 +25,12 @@ off the rule node.
 
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict
 from typing import Any
 
 from infrahub_sdk.checks import InfrahubCheck
 from infrahub_sdk.graph_traversal import Path, PathTraversalResult
+from infrahub_sdk.node import InfrahubNode
 
 FALSEY_STRINGS = frozenset({"false", "no", "0", "off"})
 
@@ -294,6 +294,25 @@ class PathAssertionCheck(InfrahubCheck):
         paths: list[Path],
         constraints: list[Any],
     ) -> dict[tuple[str, str, str], Any]:
+        """Fetch every constraint-relevant hop attribute in one GraphQL call.
+
+        For each constraint whose ``attribute_name`` is set, the check
+        needs the value of that attribute on every returned hop of the
+        constraint's ``hop_kind``. The previous implementation issued one
+        ``client.filters`` call per distinct hop kind and ran them
+        concurrently. Production deployments fan the check out across
+        many rules per proposed change, and at scale even concurrent
+        per-kind round-trips dominate the check's wall-clock time.
+
+        This implementation builds one GraphQL query with one aliased
+        block per hop kind, drives it with ``InfrahubClient.execute_graphql``,
+        and hydrates each result through ``InfrahubNode.from_graphql`` so
+        the attribute values are read through the typed SDK node rather
+        than off raw dictionaries. Hop ids ride as GraphQL variables;
+        kind and attribute names come from the schema and are
+        GraphQL-identifier-safe by construction (the schema would reject
+        anything else at load time).
+        """
         needed: dict[str, set[str]] = defaultdict(set)
         for constraint in constraints:
             attribute_name = constraint.attribute_name.value
@@ -302,30 +321,50 @@ class PathAssertionCheck(InfrahubCheck):
         if not needed:
             return {}
 
-        async def fetch_kind(kind: str, attribute_names: set[str]) -> dict[tuple[str, str, str], Any]:
-            hop_ids = {
-                hop.node.id for path in paths for hop in path.hops if hop.node.kind == kind
-            }
-            if not hop_ids:
-                return {}
-            nodes = await self.client.filters(
-                kind=kind,
-                ids=list(hop_ids),
-                branch=self.branch_name,
-                include=list(attribute_names),
+        ids_by_kind: dict[str, set[str]] = defaultdict(set)
+        for path in paths:
+            for hop in path.hops:
+                if hop.node.kind in needed:
+                    ids_by_kind[hop.node.kind].add(hop.node.id)
+        if not any(ids_by_kind.values()):
+            return {}
+
+        kinds_ordered: list[str] = [k for k in needed if ids_by_kind.get(k)]
+        variables: dict[str, list[str]] = {}
+        blocks: list[str] = []
+        for index, kind in enumerate(kinds_ordered):
+            var_name = f"ids_{index}"
+            variables[var_name] = sorted(ids_by_kind[kind])
+            attrs_selection = " ".join(
+                f"{name} {{ value }}" for name in sorted(needed[kind])
             )
-            sub: dict[tuple[str, str, str], Any] = {}
-            for node in nodes:
-                for attribute_name in attribute_names:
+            blocks.append(
+                f"k{index}: {kind}(ids: ${var_name}) "
+                f"{{ edges {{ node {{ __typename id {attrs_selection} }} }} }}"
+            )
+        if not blocks:
+            return {}
+
+        declarations = ", ".join(f"${name}: [ID]" for name in variables)
+        query = f"query FetchHopAttributes({declarations}) {{ {' '.join(blocks)} }}"
+
+        response = await self.client.execute_graphql(
+            query=query,
+            variables=variables,
+            branch_name=self.branch_name,
+            tracker="reachability-check-fetch-hop-attributes",
+        )
+
+        out: dict[tuple[str, str, str], Any] = {}
+        for index, kind in enumerate(kinds_ordered):
+            block = (response or {}).get(f"k{index}") or {}
+            edges = block.get("edges") or []
+            for edge in edges:
+                node = await InfrahubNode.from_graphql(
+                    client=self.client, branch=self.branch_name, data=edge
+                )
+                for attribute_name in needed[kind]:
                     attribute = getattr(node, attribute_name, None)
                     if attribute is not None and getattr(attribute, "value", None) is not None:
-                        sub[(kind, attribute_name, node.id)] = attribute.value
-            return sub
-
-        sub_results = await asyncio.gather(
-            *(fetch_kind(kind, names) for kind, names in needed.items())
-        )
-        merged: dict[tuple[str, str, str], Any] = {}
-        for sub in sub_results:
-            merged.update(sub)
-        return merged
+                        out[(kind, attribute_name, node.id)] = attribute.value
+        return out
