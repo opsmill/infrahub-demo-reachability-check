@@ -238,15 +238,21 @@ graph TB
 
 | Polarity (UI label) | Enum name   | Semantics                                                 |
 | ------------------- | ----------- | --------------------------------------------------------- |
-| **Must transit**    | `required`  | At least one returned path must contain a matching hop.   |
-| **Never transit**   | `forbidden` | **No** returned path may contain a matching hop (global). |
-| **Any of**          | `any_of`    | At least one `any_of` constraint must match per path.     |
+| **Required hop**    | `required`  | At least one returned path must contain a matching hop.   |
+| **Forbidden hop**   | `forbidden` | **No** returned path may contain a matching hop (global). |
+| **Any-of hop**      | `any_of`    | At least one `any_of` predicate must match per path.      |
 
 A constraint matches a hop when `hop["kind"] == hop_kind`. If
 `attribute_name` is set, the hop node's attribute value must also equal
 `attribute_value` (compared as strings after boolean normalization).
 
 ## Repository layout
+
+This repository is a **drop-in pattern**. It ships the schema, check,
+transform, queries, and menu, and nothing else. Adopters supply their
+own `reachability-rules` `CoreStandardGroup` and their own rule and
+constraint instances through the Infrahub UI, the SDK, or their own
+data-loader YAML.
 
 ```text
 reachability_check/
@@ -258,10 +264,6 @@ reachability_check/
   queries/rule_url.gql                # fetches rule data for the URL transform
   transforms/path_traversal_url.py    # Python computed-attribute transform (server-side)
   checks/path_assertion.py            # PathAssertionCheck
-  data/group.yml                      # the reachability-rules group
-  data/rules.yml                      # rule instances (source/destination by hfid)
-  data/constraints.yml                # per-rule hop predicates
-  scripts/bootstrap.py                # resolves hfids → UUIDs and creates rules/constraints
 ```
 
 ## Click-through URL: a Python computed attribute
@@ -275,7 +277,7 @@ as a `python_transform` and wired into the schema with:
 
 ```yaml
 - name: path_traversal_url
-  kind: Text
+  kind: URL
   read_only: true
   computed_attribute:
     kind: TransformPython
@@ -343,26 +345,41 @@ required. See `DEMO.md` on that branch for the exact sequence.
 
 ## How to deploy this in your Infrahub
 
-The example references device hfids (such as `atl1-edge1`). Replace
-them with hfids that exist in your instance. The kinds themselves can
-also be changed; the schema accepts any peer.
+The pattern is shipped as a drop-in repository. There is no seed
+data, no bootstrap script, and no demo content on this branch. Three
+steps stand between a fresh Infrahub instance and a working
+reachability check:
 
-```bash
-# 1. Add this repo to your Infrahub-controlled git repository (either
-#    drop the files into an existing CoreRepository, or register this
-#    repo URL as a new CoreRepository in the Infrahub UI). On every
-#    commit, .infrahub.yml is re-loaded: schema, query, check, menu.
+1. **Drop the files into an Infrahub-controlled git repository.** Add
+   the contents of this branch to an existing `CoreRepository` you
+   already track, or push the branch to a new git URL and register it
+   via the Infrahub UI (**Object Management → CoreRepository → + Add**)
+   or `infrahubctl repository add <name> <url>`. On every commit,
+   `.infrahub.yml` is re-loaded and Infrahub creates / updates the
+   schema, menu, queries, transform, and check definition.
 
-# 2. Load the group and (templated) rules/constraints, OR run the
-#    bootstrap script which resolves hfids → UUIDs and creates the
-#    rules + constraints via the SDK:
-infrahubctl object load data/group.yml
-INFRAHUB_ADDRESS=... INFRAHUB_API_TOKEN=... \
-    uv run python scripts/bootstrap.py
+2. **Create the `reachability-rules` `CoreStandardGroup`.** The
+   `CoreCheckDefinition` references this group as its `targets:`. The
+   check fans out one verdict per member rule on every proposed
+   change. Create it once, through the UI
+   (**CoreStandardGroup → + Add**) or programmatically through the
+   SDK:
 
-# 3. Open a proposed change. The check fires once per rule and reports
-#    PASS / FAIL with the actual paths in the verdict message.
-```
+   ```python
+   await client.create(kind="CoreStandardGroup", name="reachability-rules").save()
+   ```
+
+3. **Author your `TopologyReachabilityRule` instances** and add each
+   one to the `reachability-rules` group. The rule's `source` and
+   `destination` accept any node kind in your graph; the
+   `constraints` relationship attaches the per-rule predicates
+   (required, forbidden, any-of). Author them through the UI, the
+   SDK, or `infrahubctl object load`.
+
+Once the group exists and at least one rule is a member of it, every
+proposed change runs the check, produces a PASS or FAIL verdict per
+rule, and emits the `Inspect in UI:` link from the rule's
+`path_traversal_url` computed attribute.
 
 ### Tune the excluded kinds for your schema
 

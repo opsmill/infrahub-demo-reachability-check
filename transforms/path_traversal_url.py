@@ -9,13 +9,13 @@ depends on) changes. The returned string is stored on the rule and read by the
 check at evaluation time.
 
 URL parameters:
-  source         — UUID of the source endpoint
-  destination    — UUID of the destination endpoint
-  depth          — max_depth from the rule
-  maxPaths       — max_paths from the rule
-  excludedKinds  — the rule + constraint kinds (so the traversal page shows
+  source        . UUID of the source endpoint
+  destination   . UUID of the destination endpoint
+  depth         . max_depth from the rule
+  maxPaths      . max_paths from the rule
+  excludedKinds . the rule + constraint kinds (so the traversal page shows
                    the same hops the check evaluated). Constraint hop_kinds
-                   are NOT excluded — they are exactly the hops we want to
+                   are NOT excluded. they are exactly the hops we want to
                    see.
 
 The base URL comes from $INFRAHUB_PUBLIC_URL on the worker (set this in

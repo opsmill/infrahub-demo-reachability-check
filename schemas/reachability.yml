@@ -21,7 +21,7 @@ nodes:
         kind: Text
         optional: true
         order_weight: 2000
-      # Tuning knobs — defaults are good for most rules. Pushed to the
+      # Tuning knobs. Defaults are good for most rules. Pushed to the
       # bottom of the form so users see name / description / source /
       # destination / constraints first.
       - name: max_depth
@@ -36,13 +36,16 @@ nodes:
         kind: Boolean
         default_value: true
         order_weight: 2400
-      # Server-side computed attribute — a Python transform builds the
+      # Server-side computed attribute. A Python transform builds the
       # click-through URL to the path-traversal page using the rule's
-      # source/destination/depth/maxPaths and the canonical EXCLUDED_KINDS.
-      # The check reads this value at evaluation time instead of building
-      # the URL itself.
+      # source / destination / depth / maxPaths and the canonical
+      # EXCLUDED_KINDS list. The attribute kind is ``URL`` so the
+      # Infrahub UI renders the value as a clickable hyperlink on the
+      # rule detail page. The check reads ``.value`` (the raw string)
+      # at evaluation time, exactly as it would for a Text attribute,
+      # and embeds it in the verdict log message.
       - name: path_traversal_url
-        kind: Text
+        kind: URL
         read_only: true
         optional: true
         order_weight: 5000
@@ -86,36 +89,37 @@ nodes:
     attributes:
       - name: polarity
         kind: Dropdown
-        # Default to `required` — the most common constraint in practice.
+        # Default to `required`, the most common constraint in practice.
         # `optional: true` lets the UI accept the default silently.
         default_value: required
         optional: true
         order_weight: 900
-        # Labels match the vocabulary used in the customer-facing demo
-        # ("must transit" / "never transit") while the enum names stay
+        # Labels stay domain-neutral so the rule reads naturally for
+        # routing, firewall compliance, capacity, tenant segmentation,
+        # and service-dependency use cases alike. The enum names stay
         # stable so existing data / data-loader YAML keeps working.
         choices:
           - name: required
-            label: Must transit
-            description: "Path must include this hop."
+            label: Required hop
+            description: "The path must include at least one hop that matches this predicate."
             color: "#7fbf7f"
           - name: forbidden
-            label: Never transit
-            description: "Path may not include this hop."
+            label: Forbidden hop
+            description: "No returned path may include a hop that matches this predicate."
             color: "#ff8080"
           - name: any_of
-            label: Any of
-            description: "At least one of the any-of constraints must match per path."
+            label: Any-of hop
+            description: "At least one any-of predicate must match a hop on every returned path."
             color: "#a0a0ff"
       - name: hop_kind
         kind: Dropdown
         order_weight: 1000
         description: "Schema kind of hop node."
         # Ordered by impact / impressiveness for compliance, impact
-        # assessment and reachability use cases — security headlines
+        # assessment and reachability use cases: security headlines
         # first, then routing-policy assertions, then physical layout.
         choices:
-          # Showcase entry — the standard demo set does not ship a
+          # Showcase entry. The standard demo set does not ship a
           # dedicated firewall kind, so a constraint with this hop_kind
           # will not match anything in the base demo. For real firewall
           # assertions today, use `hop_kind: InfraDevice` +
@@ -155,7 +159,7 @@ nodes:
         optional: true
         description: "Expected attribute value as string. Booleans/ints normalized in the check."
         order_weight: 1200
-      # Computed fingerprint — load-bearing for human_friendly_id and
+      # Computed fingerprint, load-bearing for human_friendly_id and
       # uniqueness_constraints, but the form already hides it (read_only)
       # and the detail view shows it last (order_weight: 5000) so users
       # see the fields they authored before the auto-derived identity.
