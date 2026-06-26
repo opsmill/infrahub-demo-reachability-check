@@ -50,11 +50,17 @@ def _prepare_bare_clone() -> None:
     """(Re)create the single-branch bare clone that backs file:///srv/reachability.
 
     Infrahub task workers see this directory through the read-only bind
-    mount declared on the ``task-worker`` service. Cloning just the
-    ``live-demo`` branch keeps the worker from trying to track any other
-    git branches that exist in the host repository (and from raising
-    "Unable to identify the worktree for the branch" when it cannot find
-    a matching Infrahub branch).
+    mount declared on the ``task-worker`` service. Two design decisions
+    keep the worker happy:
+
+    1. **Single-branch clone.** The bare repo only contains
+       ``live-demo``'s commits. The worker does not see any other branch
+       and therefore cannot try (and fail) to import one.
+    2. **Branch renamed to ``main``.** Inside the bare clone the branch
+       is renamed from ``live-demo`` to ``main`` so it matches the
+       Infrahub default branch. The worker maps Infrahub's ``main``
+       branch onto the only git branch present and the sync completes
+       cleanly with no extra configuration.
     """
     if BARE_REPO_PATH.exists():
         shutil.rmtree(BARE_REPO_PATH)
@@ -71,8 +77,21 @@ def _prepare_bare_clone() -> None:
         ],
         check=True,
     )
-    # Make the bare repo's HEAD point at live-demo so the Infrahub
-    # worker's clone defaults to it without needing an extra --ref hint.
+    # Rename the only branch to ``main`` so it lines up with the
+    # Infrahub default branch and the worker has no other branches it
+    # could try to track.
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(BARE_REPO_PATH),
+            "branch",
+            "-m",
+            SERVED_BRANCH,
+            "main",
+        ],
+        check=True,
+    )
     subprocess.run(
         [
             "git",
@@ -80,7 +99,7 @@ def _prepare_bare_clone() -> None:
             str(BARE_REPO_PATH),
             "symbolic-ref",
             "HEAD",
-            f"refs/heads/{SERVED_BRANCH}",
+            "refs/heads/main",
         ],
         check=True,
     )
@@ -167,22 +186,28 @@ def register_repo(c, address=None, token=None):
 
 
 @task(help={
+    "phase": "One of: data (default), rules, all. Phase 1 (data) loads schemas, the menu, and seed data; phase 2 (rules) creates the rules + constraints. Run register-repo between them.",
     "address": "Override INFRAHUB_ADDRESS (default: http://localhost:<port>).",
     "token": "Override INFRAHUB_API_TOKEN (default: admin token from .env).",
 })
-def init(c, address=None, token=None):
-    """Load network + reachability schemas, seed data, create rules."""
+def init(c, phase="data", address=None, token=None):
+    """Run a seed phase. Phase 1 (data) loads schemas, the menu, and seed data; phase 2 (rules) creates the rules."""
     env = _docker_env()
     if address:
         env["INFRAHUB_ADDRESS"] = address
     if token:
         env["INFRAHUB_API_TOKEN"] = token
+    env["DEMO_INIT_PHASE"] = phase
     c.run("uv run python demo-seed/setup.py", pty=False, env=env)
 
 
-@task(pre=[start, register_repo, init])
+@task
 def up(c):
-    """Convenience: start + register-repo + init in one go."""
+    """Convenience: start + init(data) + register-repo + init(rules) in one go."""
+    start(c)
+    init(c, phase="data")
+    register_repo(c)
+    init(c, phase="rules")
 
 
 demo = Collection("demo")

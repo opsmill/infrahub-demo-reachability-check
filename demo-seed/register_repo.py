@@ -32,22 +32,24 @@ from infrahub_sdk.exceptions import GraphQLError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY_NAME = "reachability-check"
-REPOSITORY_REF = "live-demo"
 REPOSITORY_LOCATION = "file:///srv/reachability"
 TRANSFORM_NAME = "path_traversal_url"
+CHECK_DEFINITION_NAME = "reachability_assertion"
 POLL_TIMEOUT_SECONDS = 300
 POLL_INTERVAL_SECONDS = 5
 
 
 def _register_via_ctl(location: str) -> None:
+    # The served bare clone exposes a single git branch named ``main``
+    # (see tasks.py:_prepare_bare_clone), so no ``--ref`` argument is
+    # needed: Infrahub's default branch maps to the only branch
+    # present in the served repo.
     cmd = [
         "infrahubctl",
         "repository",
         "add",
         REPOSITORY_NAME,
         location,
-        "--ref",
-        REPOSITORY_REF,
     ]
     print("$", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True, cwd=REPO_ROOT)
@@ -58,10 +60,18 @@ async def _existing_repo(client: InfrahubClient) -> Any | None:
     return matches[0] if matches else None
 
 
-async def _wait_for_transform(client: InfrahubClient) -> None:
+async def _wait_for_sync_artifacts(client: InfrahubClient) -> None:
+    """Poll until both the Python transform and the check definition exist.
+
+    The CoreRepository sync installs many artefacts in order:
+    schema, menu, GraphQL queries, transforms, check definitions. We
+    wait specifically on the last two we need, so we can be sure the
+    sync has reached the check definition step before this script
+    returns.
+    """
     print(
-        f"Waiting up to {POLL_TIMEOUT_SECONDS}s for Python transform "
-        f"'{TRANSFORM_NAME}' to install...",
+        f"Waiting up to {POLL_TIMEOUT_SECONDS}s for the repository sync "
+        f"to install '{TRANSFORM_NAME}' and '{CHECK_DEFINITION_NAME}'...",
         flush=True,
     )
     deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
@@ -70,16 +80,24 @@ async def _wait_for_transform(client: InfrahubClient) -> None:
             transforms = await client.filters(
                 kind="CoreTransformPython", name__value=TRANSFORM_NAME
             )
+            checks = await client.filters(
+                kind="CoreCheckDefinition", name__value=CHECK_DEFINITION_NAME
+            )
         except GraphQLError:
             transforms = []
-        if transforms:
-            print(f"Transform '{TRANSFORM_NAME}' is installed.")
+            checks = []
+        if transforms and checks:
+            print(
+                f"Transform '{TRANSFORM_NAME}' and check definition "
+                f"'{CHECK_DEFINITION_NAME}' are installed."
+            )
             return
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
     raise SystemExit(
-        f"Timed out after {POLL_TIMEOUT_SECONDS}s waiting for transform "
-        f"'{TRANSFORM_NAME}'. Check the task-worker logs with "
-        f"`docker compose logs task-worker` to diagnose the repository sync."
+        f"Timed out after {POLL_TIMEOUT_SECONDS}s waiting for the sync to "
+        f"install '{TRANSFORM_NAME}' and '{CHECK_DEFINITION_NAME}'. Check "
+        f"the task-worker logs with `docker compose logs task-worker` to "
+        f"diagnose the repository sync."
     )
 
 
@@ -101,7 +119,7 @@ async def main() -> None:
     else:
         _register_via_ctl(location)
 
-    await _wait_for_transform(client)
+    await _wait_for_sync_artifacts(client)
 
 
 if __name__ == "__main__":

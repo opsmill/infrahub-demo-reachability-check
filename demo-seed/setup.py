@@ -1,19 +1,30 @@
 """Bootstrap the reachability-check demo against a running Infrahub 1.10.
 
-Run after `docker compose up -d` is healthy. Requires SDK 1.22+
-(`pip install infrahub-sdk==1.22.0`) and a populated `.env` (or
-INFRAHUB_ADDRESS / INFRAHUB_API_TOKEN env vars).
+Run after ``docker compose up -d`` is healthy. Requires SDK 1.22 or
+later. ``INFRAHUB_ADDRESS`` and ``INFRAHUB_API_TOKEN`` must be exported.
 
-Steps:
-  1. Load the network schema (InfraDevice, InfraAutonomousSystem, InfraBGPSession).
-  2. Load ASNs, devices, BGP sessions.
-  3. Load the reachability-check schema (TopologyReachabilityRule + TopologyReachabilityConstraint).
-  4. Create the reachability-rules group + two rules with their constraints.
+The script is split into two phases so the CoreRepository registration
+can run between them:
 
-The check itself runs inside Infrahub workers via the `.infrahub.yml`
-registration — which is loaded automatically once you register this repo
-as a CoreRepository in the Infrahub UI. This script does not register
-the repository; it only seeds the data the check operates on.
+  Phase 1 ("data", default):
+      - Load schemas (network, reachability).
+      - Load the menu.
+      - Load ASNs, devices, BGP sessions, and the reachability-rules group.
+
+  Phase 2 ("rules"):
+      - Create the two TopologyReachabilityRule instances and their
+        TopologyReachabilityConstraint children.
+
+The recommended order is::
+
+    uv run invoke demo.start             # boots Infrahub 1.10
+    uv run invoke demo.init              # phase 1: data
+    uv run invoke demo.register-repo     # CoreRepository sync installs the transform
+    uv run invoke demo.init --phase rules
+        # phase 2: rules. Rule creation now fires the path_traversal_url
+        # transform automatically and populates the URL on every rule.
+
+``demo.up`` performs the four steps in order.
 """
 
 from __future__ import annotations
@@ -28,14 +39,17 @@ from infrahub_sdk import Config, InfrahubClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The reachability schema, menu, queries, transform, and check
-# definition are all installed automatically when the CoreRepository
-# is registered (see `uv run invoke demo.register-repo` and
-# .infrahub.yml). This script only loads the network schema (which is
-# specific to this demo and not in .infrahub.yml) and the seed data
-# that the rules will operate on.
+# Phase 1 loads everything except the rules. The schemas and menu are
+# also installed by the CoreRepository sync, but loading them manually
+# (and idempotently) up-front guarantees they exist before the data
+# load and before any rule create, regardless of the order the user
+# runs the invoke tasks in.
 SCHEMAS = [
     "demo-seed/schemas/network.yml",
+    "schemas/reachability.yml",
+]
+MENUS = [
+    "menus/reachability.yml",
 ]
 DATA_FILES = [
     "demo-seed/data/01-asns.yml",
@@ -83,6 +97,8 @@ def _run(cmd: list[str]) -> None:
 def _load_schemas_and_data() -> None:
     for schema in SCHEMAS:
         _run(["infrahubctl", "schema", "load", schema])
+    for menu in MENUS:
+        _run(["infrahubctl", "menu", "load", menu])
     for data in DATA_FILES:
         _run(["infrahubctl", "object", "load", data])
 
@@ -166,8 +182,22 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(2)
-    _load_schemas_and_data()
-    asyncio.run(_seed_rules())
+
+    phase = (os.environ.get("DEMO_INIT_PHASE") or "data").strip().lower()
+    if phase == "data":
+        _load_schemas_and_data()
+    elif phase == "rules":
+        asyncio.run(_seed_rules())
+    elif phase == "all":
+        _load_schemas_and_data()
+        asyncio.run(_seed_rules())
+    else:
+        print(
+            f"ERROR: DEMO_INIT_PHASE='{phase}' is not recognised. "
+            "Expected one of: data, rules, all.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 if __name__ == "__main__":
