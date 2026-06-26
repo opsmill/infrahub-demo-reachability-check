@@ -33,7 +33,7 @@ own data-loader YAML.
 `schemas/reachability.yml` declares two nodes in the `Topology`
 namespace:
 
-**`TopologyReachabilityRule`** — the assertion.
+**`TopologyReachabilityRule`**: the assertion.
 
 | Attribute / Relationship  | Kind                       | Notes                                                              |
 | ------------------------- | -------------------------- | ------------------------------------------------------------------ |
@@ -47,7 +47,7 @@ namespace:
 | `destination`             | `peer: CoreNode`           | Any node kind in the graph.                                        |
 | `constraints`             | `Component`, many          | Children: `TopologyReachabilityConstraint`.                        |
 
-**`TopologyReachabilityConstraint`** — one hop predicate per child.
+**`TopologyReachabilityConstraint`**: one hop predicate per child.
 
 | Attribute     | Kind                | Notes                                                                                  |
 | ------------- | ------------------- | -------------------------------------------------------------------------------------- |
@@ -316,7 +316,7 @@ your fork):
 3. `EXCLUDED_KINDS` tuple in `checks/path_assertion.py` (what the
    check actually passes to `client.traverse_paths()`).
 
-## RBAC — separation of duties and lock-down
+## RBAC: separation of duties and lock-down
 
 ### Separation of duties: three roles, one workflow
 
