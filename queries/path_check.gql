@@ -10,6 +10,11 @@ query PathCheck(
       destination_id: $destination_id
       max_depth: $max_depth
       max_paths: $max_paths
+      # All loopless paths, not just the shortest-through-each-intermediate
+      # subset. A reachability rule must see every way source reaches
+      # destination so "transit AS64496" is judged on genuine peering paths,
+      # not only the co-membership shortcut. Requires Infrahub >= 1.10.1.
+      shortest_paths_only: false
       excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint"]
     }
   ) {
