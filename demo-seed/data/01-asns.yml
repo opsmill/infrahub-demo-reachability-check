@@ -13,3 +13,6 @@ spec:
     - name: Verizon
       asn: 701
       description: "Neutral transit AS."
+    - name: Peachtree Metro
+      asn: 65001
+      description: "Atlanta edge customer AS — peers into the Duff backbone (AS64496)."

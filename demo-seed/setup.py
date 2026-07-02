@@ -259,7 +259,7 @@ SCENARIOS: list[dict] = [
         "branch": "cobrian-reroute-via-colt",
         "pc_name": "Chloe O'Brian: reroute atl1 via Colt (AS8220)",
         "pc_description": (
-            "Single-field change: atl1-edge1.asn AS64496 -> AS8220 (Colt). "
+            "Single-field change: atl1-edge1.asn AS65001 -> AS8220 (Colt). "
             "The atl-to-jfk reachability rule fails on the forbidden hop."
         ),
         "edits": [

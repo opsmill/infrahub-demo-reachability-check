@@ -4,9 +4,13 @@ kind: Object
 spec:
   kind: InfraDevice
   data:
+    # atl1 is a customer edge in its own AS (AS65001). It reaches the Duff
+    # backbone (AS64496) only by peering, so "transit AS64496" depends on a
+    # real BGP session, not on shared-AS co-membership. jfk1 and dfw1 anchor
+    # the backbone (AS64496).
     - name: atl1-edge1
       description: "Atlanta edge router."
-      asn: "64496"
+      asn: "65001"
     - name: jfk1-edge1
       description: "New York edge router."
       asn: "64496"

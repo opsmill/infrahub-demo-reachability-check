@@ -1,9 +1,12 @@
 ---
-# BGP sessions stitch the topology. The reachability check traverses
-# device -> bgp_session -> device, so each pair we want to assert needs
-# at least one session in between. We seed both the AS64496 transit
-# (the approved path) and an AS8220 transit (so the forbidden case
-# can fire on the demo PC).
+# BGP sessions stitch the topology. atl1 (customer AS65001) peers INTO the
+# Duff backbone (AS64496) where jfk1 and dfw1 live. Because atl1 is not a
+# co-member of AS64496, an atl1 -> jfk1 path can only transit AS64496 through
+# one of these sessions (remote_as=64496), e.g.
+# atl1 -> session(atl1<->dfw1) -> AS64496 -> jfk1. Delete atl1's backbone
+# peerings and the rule goes red. We also seed a dormant AS8220 (Colt)
+# session so the forbidden case can fire on the demo PC. Sessions between the
+# same pair are distinguished by remote_as (see the BGPSession schema).
 apiVersion: infrahub.app/v1
 kind: Object
 spec:
@@ -25,11 +28,12 @@ spec:
       remote_as: "64496"
       description: "jfk1-edge1 ↔ dfw1-edge1 via Duff (AS64496)."
 
-    # Pre-existing Colt (AS8220) session on atl1↔jfk1 — already wired
-    # up but unused on `main` because every device's primary asn points
-    # to AS64496. The demo PC repoints atl1-edge1.asn to AS8220 which
-    # surfaces a depth-3 atl1 -> AS8220 -> bgp_session -> jfk1 path
-    # that the forbidden constraint rejects.
+    # Pre-existing Colt (AS8220) session on atl1↔jfk1 — already wired up
+    # but dormant on `main`: AS8220 is a leaf (nothing else connects to it),
+    # so no atl1 -> jfk1 path transits it. The demo PC repoints
+    # atl1-edge1.asn to AS8220, which surfaces a depth-3
+    # atl1 -> AS8220 -> bgp_session -> jfk1 path that the forbidden
+    # constraint rejects.
     - local_device: "atl1-edge1"
       remote_device: "jfk1-edge1"
       remote_as: "8220"
