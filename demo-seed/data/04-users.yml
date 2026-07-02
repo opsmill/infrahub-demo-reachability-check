@@ -1,0 +1,113 @@
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/object/latest.json
+#
+# Network-engineer users for the reachability-check demo.
+#
+# Implements README Step 5 ("Separation of duties"): network engineers
+# change the topology freely but must not create / update / delete the
+# reachability rules that guard it, so they cannot loosen the assertion
+# that catches their own change.
+#
+# Modelled as: the two accounts join the "Network Engineers" group,
+# which carries the built-in "General Access" role (the normal-user
+# baseline) PLUS a dedicated deny role, "No Reachability Rule Edits".
+# In Infrahub a DENY always wins over an ALLOW, so the pair yields
+# "normal user, minus rule editing". View stays allowed, so engineers
+# still see the rule that failed their proposed change; only the
+# create / update / delete actions are blocked.
+#
+# CoreAccount / CoreAccountGroup / CoreAccountRole / CoreObjectPermission
+# are branch-agnostic (global) nodes, so this file is loaded straight
+# onto main like the other seed data -- branch scoping does not apply.
+#
+# decision codes: 1 = deny, 4 = allow on default branch, 6 = allow on all branches.
+
+---
+apiVersion: infrahub.app/v1
+kind: Object
+spec:
+  kind: CoreAccountRole
+  data:
+    - name: "No Reachability Rule Edits"
+
+---
+apiVersion: infrahub.app/v1
+kind: Object
+spec:
+  kind: CoreObjectPermission
+  data:
+    - namespace: Topology
+      name: ReachabilityRule
+      action: create
+      decision: 1
+      description: "Network engineers may not create reachability rules."
+      roles:
+        - "No Reachability Rule Edits"
+    - namespace: Topology
+      name: ReachabilityRule
+      action: update
+      decision: 1
+      description: "Network engineers may not edit reachability rules."
+      roles:
+        - "No Reachability Rule Edits"
+    - namespace: Topology
+      name: ReachabilityRule
+      action: delete
+      decision: 1
+      description: "Network engineers may not delete reachability rules."
+      roles:
+        - "No Reachability Rule Edits"
+    - namespace: Topology
+      name: ReachabilityConstraint
+      action: create
+      decision: 1
+      description: "Network engineers may not create rule constraints."
+      roles:
+        - "No Reachability Rule Edits"
+    - namespace: Topology
+      name: ReachabilityConstraint
+      action: update
+      decision: 1
+      description: "Network engineers may not edit rule constraints."
+      roles:
+        - "No Reachability Rule Edits"
+    - namespace: Topology
+      name: ReachabilityConstraint
+      action: delete
+      decision: 1
+      description: "Network engineers may not delete rule constraints."
+      roles:
+        - "No Reachability Rule Edits"
+
+---
+apiVersion: infrahub.app/v1
+kind: Object
+spec:
+  kind: CoreAccountGroup
+  data:
+    - name: "Network Engineers"
+      label: "Network Engineers"
+      description: "Topology engineers: full topology access, read-only on reachability rules."
+      roles:
+        - "General Access"
+        - "No Reachability Rule Edits"
+
+---
+apiVersion: infrahub.app/v1
+kind: Object
+spec:
+  kind: CoreAccount
+  data:
+    - name: sofia
+      password: infrahub
+      label: "Sofia Hernandez"
+      account_type: User
+      status: active
+      member_of_groups:
+        - "Network Engineers"
+    - name: chloe
+      password: infrahub
+      label: "Chloe O'Brian"
+      account_type: User
+      status: active
+      member_of_groups:
+        - "Network Engineers"

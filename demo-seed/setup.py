@@ -9,7 +9,8 @@ can run between them:
   Phase 1 ("data", default):
       - Load schemas (network, reachability).
       - Load the menu.
-      - Load ASNs, devices, BGP sessions, and the reachability-rules group.
+      - Load ASNs, devices, BGP sessions, network-engineer users, and
+        the reachability-rules group.
 
   Phase 2 ("rules"):
       - Create the two TopologyReachabilityRule instances and their
@@ -56,6 +57,11 @@ DATA_FILES = [
     "demo-seed/data/01-asns.yml",
     "demo-seed/data/02-devices.yml",
     "demo-seed/data/03-bgp-sessions.yml",
+    # Network-engineer users (sofia, chloe): full topology access, but
+    # denied create/update/delete on the reachability rules. Global
+    # (branch-agnostic) account/permission objects, so load order among
+    # these files does not matter.
+    "demo-seed/data/04-users.yml",
 ]
 
 GROUP_NAME = "reachability-rules"
