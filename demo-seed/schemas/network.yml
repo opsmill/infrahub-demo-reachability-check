@@ -61,8 +61,14 @@ nodes:
     namespace: Infra
     label: "BGP Session"
     icon: "mdi:lan-connect"
-    human_friendly_id: ["local_device__name__value", "remote_device__name__value"]
-    display_label: "{{ local_device__name__value }} ↔ {{ remote_device__name__value }}"
+    # Identity includes remote_as so parallel sessions between the same
+    # device pair (e.g. atl1<->jfk1 via AS64496 and via AS8220) are
+    # distinct objects. Without remote_as here, the two collide on HFID
+    # and `infrahubctl object load` collapses them into one.
+    human_friendly_id: ["local_device__name__value", "remote_device__name__value", "remote_as__asn__value"]
+    display_label: "{{ local_device__name__value }} ↔ {{ remote_device__name__value }} (AS{{ remote_as__asn__value }})"
+    uniqueness_constraints:
+      - ["local_device", "remote_device", "remote_as"]
     attributes:
       - name: description
         kind: Text
