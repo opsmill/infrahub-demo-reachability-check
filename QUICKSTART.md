@@ -1,10 +1,12 @@
 # Quickstart
 
 Run the reachability-check pattern end-to-end against a clean
-Infrahub 1.10 stack on your laptop. This branch (`live-demo`) ships
-a `docker-compose.yml` pinned to Infrahub 1.10, a minimal topology
+Infrahub 1.10.1 stack on your laptop. This branch (`live-demo`) ships
+a `docker-compose.yml` pinned to Infrahub 1.10.1, a minimal topology
 seed, the SDK 1.22 check, and an `invoke` task that puts it all
-together.
+together. Infrahub 1.10.1 is required: the check evaluates reachability
+over *all* loopless paths (`shortest_paths_only: false`), which the
+`PathTraversalInput` API first exposed in 1.10.1.
 
 Looking for the value walkthrough instead of the steps? See
 [`../README.md`](README.md). For the architecture, schema reference,
@@ -32,10 +34,10 @@ This runs five steps in order:
 
 1. **`demo.start`** — builds the single-branch bare clone the
    task-worker bind-mounts at `/srv/reachability`, then
-   `docker compose up -d` for Infrahub 1.10. Waits up to five
+   `docker compose up -d` for Infrahub 1.10.1. Waits up to five
    minutes for `/api/config` to return 200.
 2. **`demo.init --phase data`** — loads the network schema, the
-   reachability schema and menu, the topology seed (3 ASNs, 3
+   reachability schema and menu, the topology seed (4 ASNs, 3
    devices, 4 BGP sessions), and creates the `reachability-rules`
    `CoreStandardGroup`.
 3. **`demo.register-repo`** — registers this repository as a
@@ -60,9 +62,9 @@ Open <http://localhost:8000>. Default admin token:
 
 | Kind                              | Count | Notes                                                       |
 | --------------------------------- | ----: | ----------------------------------------------------------- |
-| `InfraAutonomousSystem`           |     3 | AS64496 (Duff), AS8220 (Colt), AS701                        |
-| `InfraDevice`                     |     3 | atl1-edge1, jfk1-edge1, dfw1-edge1                          |
-| `InfraBGPSession`                 |     4 | Full mesh on AS64496 plus atl1↔jfk1 on AS8220               |
+| `InfraAutonomousSystem`           |     4 | AS64496 (Duff), AS8220 (Colt), AS701, AS65001 (Peachtree Metro) |
+| `InfraDevice`                     |     3 | atl1-edge1 (customer AS65001), jfk1-edge1, dfw1-edge1 (both AS64496) |
+| `InfraBGPSession`                 |     4 | atl1 peers into AS64496 (to jfk1, dfw1); jfk1↔dfw1 iBGP; plus dormant atl1↔jfk1 on AS8220 |
 | `TopologyReachabilityRule`        |     2 | `atl-to-jfk-via-as64496`, `atl-to-dfw-via-as64496`          |
 | `TopologyReachabilityConstraint`  |     3 | "Required AS64496" ×2, "Forbidden AS8220" ×1                |
 | `CoreProposedChange`              |     3 | Sofia (PASS), Chloe (FAIL forbidden), Administrator (FAIL no path) |
@@ -102,14 +104,19 @@ branch. Mirror of slide 15 of the recorded demo.
 - **Expected verdict (both rule cards green):**
 
   ```text
-  atl-to-jfk-via-as64496  ✅  3/3 paths satisfy all constraints (cap: max_paths=50)
-  atl-to-dfw-via-as64496  ✅  3/3 paths satisfy all constraints (cap: max_paths=50)
+  atl-to-jfk-via-as64496  ✅  2/4 paths satisfy all constraints (cap: max_paths=50)
+  atl-to-dfw-via-as64496  ✅  2/3 paths satisfy all constraints (cap: max_paths=50)
   ```
+
+  Green because atl1 genuinely peers into the AS64496 backbone (e.g.
+  `atl1 → session(atl1↔dfw1) → AS64496 → jfk1`), not because of shared-AS
+  co-membership — atl1 is a customer in AS65001. Sever atl1's AS64496
+  peerings and these rules go red.
 
 ### 02. FAIL — Chloe O'Brian, reroute via Colt (AS8220)
 
 - **Branch:** `cobrian-reroute-via-colt`
-- **Change:** `atl1-edge1.asn` reassigned from AS64496 to AS8220.
+- **Change:** `atl1-edge1.asn` reassigned from AS65001 to AS8220.
 - **Open the PC:** Proposed Changes → "Chloe O'Brian: reroute atl1
   via Colt (AS8220)" → **Checks** tab.
 - **Expected verdict:**
@@ -132,7 +139,7 @@ branch. Mirror of slide 15 of the recorded demo.
 
   ```text
   atl-to-jfk-via-as64496  ❌  No path within depth 1 between 'atl1-edge1' and 'jfk1-edge1'.
-  atl-to-dfw-via-as64496  ✅  3/3 paths satisfy all constraints.
+  atl-to-dfw-via-as64496  ✅  2/3 paths satisfy all constraints.
   ```
 
 ## Inspect the failing path

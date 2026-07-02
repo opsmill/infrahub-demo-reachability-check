@@ -44,7 +44,7 @@ evaluated on every proposed change.
 
 - *Just want to run it?* Switch to [`live-demo`](../../tree/live-demo)
   and follow [`QUICKSTART.md`](../../tree/live-demo/QUICKSTART.md).
-  One command brings up Infrahub 1.10 with three preloaded proposed
+  One command brings up Infrahub 1.10.1 with three preloaded proposed
   changes to inspect.
 - *Want to deploy it yourself?* See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)
   for schema, check, transform, sequence diagrams, RBAC, deployment.
@@ -220,7 +220,7 @@ Switch to [`live-demo`](../../tree/live-demo) and run:
 uv run invoke demo.up
 ```
 
-This brings up Infrahub 1.10 in docker, registers this repository as
+This brings up Infrahub 1.10.1 in docker, registers this repository as
 a `CoreRepository`, seeds the topology, creates the rules, and opens
 three proposed changes mirroring the recorded demo (Sofia, Chloe,
 Administrator). Full walkthrough in
