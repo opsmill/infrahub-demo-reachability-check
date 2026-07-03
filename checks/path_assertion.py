@@ -1,15 +1,22 @@
-"""Reachability path-assertion check (SDK 1.22 edition).
+"""Reachability path-assertion check (SDK 1.22.1 edition).
 
-Drives the path traversal by issuing the ``InfrahubPathTraversal``
-GraphQL query directly (``client.execute_graphql`` with
-``PATH_TRAVERSAL_QUERY``), because it needs ``shortest_paths_only:
-false`` — all loopless paths, not just the shortest-through-each-
-intermediate subset — and the SDK 1.22 ``traverse_paths`` helper
-cannot send that flag. Requires Infrahub 1.10.1 or later (the release
-that exposed ``shortest_paths_only`` on ``PathTraversalInput``). The
-stored ``path_check`` query stays registered because ``InfrahubCheck``
-requires ``query`` to be set; the check runs its own equivalent query
-and consumes the raw response dict.
+Drives the path traversal through the SDK's first-class
+``client.traverse_paths(...)`` helper with
+``shortest_paths_only=False`` — all loopless paths, not just the
+shortest-through-each-intermediate subset — so a rule is judged on
+genuine peering paths rather than only a co-membership shortcut.
+This is the upstream, stable way to run a traversal: the SDK owns the
+``InfrahubPathTraversal`` GraphQL query and returns a typed
+``PathTraversalResult``, so the check no longer hand-maintains a query
+string that has to be kept in sync with the server schema.
+
+Requires infrahub-sdk 1.22.1 or later (the release that exposes
+``shortest_paths_only`` on ``traverse_paths`` / ``PathTraversalInput``;
+1.22.0 accepted the flag only on ``reachable_nodes``) and Infrahub
+1.10.1 or later on the server side. The stored ``path_check`` query
+stays registered because ``InfrahubCheck`` requires ``query`` to be
+set, but the check overrides ``collect_data`` and never executes it;
+the traversal is entirely delegated to the SDK.
 
 The check does not emit the click-through URL in its verdict log.
 The rule already exposes ``path_traversal_url`` as a read-only,
@@ -29,13 +36,14 @@ off the rule node.
 Production tuning
 -----------------
 Every outbound SDK call carries an explicit ``timeout`` so a slow
-database cannot tie up a check worker indefinitely, and a ``tracker``
-identifier so the call shows up in the Prefect / Infrahub run tree
-under a meaningful name (look for ``reachability-check-*`` in worker
-logs). One outbound call per concern:
+database cannot tie up a check worker indefinitely. Calls the check
+issues directly also carry a ``tracker`` identifier so they show up in
+the Prefect / Infrahub run tree under a meaningful name (look for
+``reachability-check-*`` in worker logs); ``traverse_paths`` sets its
+own ``query-path-traversal`` tracker. One outbound call per concern:
 
   ``client.get``              - load the rule + constraints
-  ``client.execute_graphql``  - run the path traversal (all loopless paths)
+  ``client.traverse_paths``   - run the path traversal (all loopless paths)
   ``client.execute_graphql``  - batched attribute fetch across all hop kinds
 
 The check therefore costs three network round-trips per rule
@@ -78,42 +86,6 @@ EXCLUDED_KINDS: tuple[str, ...] = (
     "TopologyReachabilityRule",
     "TopologyReachabilityConstraint",
 )
-
-# The check issues this query directly (via ``execute_graphql``) instead of
-# the SDK's ``traverse_paths`` helper, because ``traverse_paths`` in SDK 1.22
-# cannot send ``shortest_paths_only``. All-paths mode (``false``) returns every
-# loopless path up to ``max_paths`` — not just the shortest-through-each-
-# intermediate subset — so a rule is judged on genuine peering paths rather
-# than only a co-membership shortcut. ``shortest_paths_only`` on
-# ``PathTraversalInput`` requires Infrahub >= 1.10.1. Mirrors the registered
-# ``queries/path_check.gql``; ``excluded_kinds`` rides as a variable so
-# ``EXCLUDED_KINDS`` above stays the single source of truth.
-PATH_TRAVERSAL_QUERY = """
-query PathCheck(
-  $source_id: String!
-  $destination_id: String!
-  $max_depth: Int
-  $max_paths: Int
-  $excluded_kinds: [String!]
-) {
-  InfrahubPathTraversal(
-    data: {
-      source_id: $source_id
-      destination_id: $destination_id
-      max_depth: $max_depth
-      max_paths: $max_paths
-      shortest_paths_only: false
-      excluded_kinds: $excluded_kinds
-    }
-  ) {
-    paths { hops { node { id kind display_label } } depth }
-    source { id display_label }
-    destination { id display_label }
-    count
-  }
-}
-"""
-
 
 def _is_disabled(value: Any) -> bool:
     """Return ``True`` when a rule's ``enabled`` flag should be treated as disabled.
@@ -187,24 +159,28 @@ class PathAssertionCheck(InfrahubCheck):
     # ``query`` is required by ``InfrahubCheck.__init__`` and the
     # ``CoreCheckDefinition`` repo-sync flow. A stored ``path_check``
     # query is registered in ``.infrahub.yml`` so the check passes
-    # validation, but ``collect_data`` does not execute it; it runs
-    # ``PATH_TRAVERSAL_QUERY`` (with ``shortest_paths_only: false``) instead.
+    # validation, but ``collect_data`` does not execute it; it calls
+    # ``client.traverse_paths(..., shortest_paths_only=False)`` instead.
     query = "path_check"
     timeout = 120
 
     # The check fetches the rule once in collect_data and stashes both
     # the rule and the traversal result so validate() does not have to
-    # round-trip again.
+    # round-trip again. ``_traversal`` holds the SDK's typed
+    # ``PathTraversalResult`` (``.paths`` / ``.source`` / ``.destination``
+    # / ``.count``); each path exposes ``.hops`` and each hop ``.node``
+    # with ``.id`` / ``.kind`` / ``.display_label``.
     _rule: Any | None = None
-    _traversal: dict | None = None
+    _traversal: Any | None = None
 
     async def collect_data(self) -> dict:
         """Load the rule and run the path traversal.
 
         Returns a small ``dict`` whose keys act as sentinels for
         ``validate``. A successful run returns ``{"_ok": True}`` and
-        leaves the loaded rule on ``self._rule`` and the traversal
-        result dict on ``self._traversal`` for ``validate`` to read.
+        leaves the loaded rule on ``self._rule`` and the typed
+        ``PathTraversalResult`` on ``self._traversal`` for ``validate``
+        to read.
         Early-exit sentinels:
 
           ``_no_rule_id``       - the runner did not pass ``rule_id``.
@@ -247,20 +223,24 @@ class PathAssertionCheck(InfrahubCheck):
         if source_id == destination_id:
             return {"_self_loop": True}
 
-        response = await self.client.execute_graphql(
-            query=PATH_TRAVERSAL_QUERY,
-            variables={
-                "source_id": source_id,
-                "destination_id": destination_id,
-                "max_depth": _coerce_int(rule.max_depth.value),
-                "max_paths": _coerce_int(rule.max_paths.value),
-                "excluded_kinds": list(EXCLUDED_KINDS),
-            },
-            branch_name=self.branch_name,
-            tracker="reachability-check-path-traversal",
+        # All-paths mode (``shortest_paths_only=False``) returns every
+        # loopless path up to ``max_paths`` — not just the shortest-
+        # through-each-intermediate subset — so the rule is judged on
+        # genuine peering paths rather than only a co-membership
+        # shortcut. ``traverse_paths`` owns the ``InfrahubPathTraversal``
+        # query and sets its own ``query-path-traversal`` tracker;
+        # ``excluded_kinds`` is passed straight through so
+        # ``EXCLUDED_KINDS`` above stays the single source of truth.
+        self._traversal = await self.client.traverse_paths(
+            source_id,
+            destination_id,
+            max_depth=_coerce_int(rule.max_depth.value),
+            max_paths=_coerce_int(rule.max_paths.value),
+            excluded_kinds=list(EXCLUDED_KINDS),
+            shortest_paths_only=False,
+            branch=self.branch_name,
             timeout=CHECK_REQUEST_TIMEOUT,
         )
-        self._traversal = (response or {}).get("InfrahubPathTraversal") or {}
         return {"_ok": True}
 
     async def validate(self, data: dict) -> None:
@@ -308,12 +288,12 @@ class PathAssertionCheck(InfrahubCheck):
 
         constraints = [related.peer for related in rule.constraints.peers]
 
-        result = self._traversal or {}
-        paths = result.get("paths") or []
-        source_label = (result.get("source") or {}).get("display_label") or getattr(
+        result = self._traversal
+        paths = list(result.paths) if result is not None else []
+        source_label = (getattr(result, "source", None) and result.source.display_label) or getattr(
             getattr(rule, "source", None), "display_label", None
         )
-        dest_label = (result.get("destination") or {}).get("display_label") or getattr(
+        dest_label = (getattr(result, "destination", None) and result.destination.display_label) or getattr(
             getattr(rule, "destination", None), "display_label", None
         )
         max_depth = rule.max_depth.value
@@ -346,8 +326,8 @@ class PathAssertionCheck(InfrahubCheck):
         requirement_violations: list[str] = []
         valid_count = 0
         for path in paths:
-            hops = [hop["node"] for hop in path.get("hops") or []]
-            trail = " → ".join(node["display_label"] for node in hops)
+            hops = [hop.node for hop in path.hops]
+            trail = " → ".join(node.display_label for node in hops)
             for c in forbidden:
                 if any(self._hop_matches(node, c, attr_values) for node in hops):
                     forbidden_hits.append(f"[{trail}]: forbidden {self._describe(c)} present")
@@ -405,23 +385,23 @@ class PathAssertionCheck(InfrahubCheck):
                 ok = False
         return ok
 
-    def _hop_matches(self, hop_node: dict, constraint: Any, attr_values: dict) -> bool:
+    def _hop_matches(self, hop_node: Any, constraint: Any, attr_values: dict) -> bool:
         """Return ``True`` if a single hop satisfies a single constraint.
 
-        ``hop_node`` is the GraphQL node dict (``{"id", "kind",
-        "display_label"}``). A constraint matches a hop when the hop's
+        ``hop_node`` is the SDK ``PathNode`` (``.id`` / ``.kind`` /
+        ``.display_label``). A constraint matches a hop when the hop's
         schema kind equals ``constraint.hop_kind``. If the constraint
         also names an ``attribute_name``, the hop node's value for that
         attribute (looked up in the prefetched ``attr_values`` table)
         must equal ``constraint.attribute_value`` after both sides are
         passed through ``_normalize``.
         """
-        if hop_node["kind"] != constraint.hop_kind.value:
+        if hop_node.kind != constraint.hop_kind.value:
             return False
         attribute_name = constraint.attribute_name.value
         if attribute_name is None:
             return True
-        actual = attr_values.get((constraint.hop_kind.value, attribute_name, hop_node["id"]))
+        actual = attr_values.get((constraint.hop_kind.value, attribute_name, hop_node.id))
         if actual is None:
             return False
         return _normalize(actual) == _normalize(constraint.attribute_value.value)
@@ -476,10 +456,10 @@ class PathAssertionCheck(InfrahubCheck):
 
         ids_by_kind: dict[str, set[str]] = defaultdict(set)
         for path in paths:
-            for hop in path.get("hops") or []:
-                node = hop["node"]
-                if node["kind"] in needed:
-                    ids_by_kind[node["kind"]].add(node["id"])
+            for hop in path.hops:
+                node = hop.node
+                if node.kind in needed:
+                    ids_by_kind[node.kind].add(node.id)
         if not any(ids_by_kind.values()):
             return {}
 

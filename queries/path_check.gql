@@ -1,42 +1,20 @@
-query PathCheck(
-  $source_id: String!
-  $destination_id: String!
-  $max_depth: Int
-  $max_paths: Int
-) {
-  InfrahubPathTraversal(
-    data: {
-      source_id: $source_id
-      destination_id: $destination_id
-      max_depth: $max_depth
-      max_paths: $max_paths
-      # All loopless paths, not just the shortest-through-each-intermediate
-      # subset. A reachability rule must see every way source reaches
-      # destination so "transit AS64496" is judged on genuine peering paths,
-      # not only the co-membership shortcut. Requires Infrahub >= 1.10.1.
-      shortest_paths_only: false
-      excluded_kinds: ["TopologyReachabilityRule", "TopologyReachabilityConstraint"]
-    }
-  ) {
-    paths {
-      hops {
-        node {
-          id
-          kind
-          hfid
-          display_label
-        }
+# Placeholder query, kept only to satisfy ``InfrahubCheck``'s requirement
+# that ``query`` name a registered GraphQL query. The reachability check
+# does NOT execute this query: it overrides ``collect_data`` and drives
+# the traversal through the SDK's first-class
+# ``client.traverse_paths(..., shortest_paths_only=False)`` helper
+# (infrahub-sdk 1.22.1+, Infrahub 1.10.1+). Delegating to the SDK means
+# there is no hand-maintained ``InfrahubPathTraversal`` query to keep in
+# sync with the server schema — which is the whole point of moving off the
+# reverse-engineered GraphQL. This trivially selects the rule kind so the
+# stored query registers cleanly during repo-sync.
+query PathCheck {
+  TopologyReachabilityRule {
+    edges {
+      node {
+        id
+        __typename
       }
-      depth
     }
-    source {
-      id
-      display_label
-    }
-    destination {
-      id
-      display_label
-    }
-    count
   }
 }

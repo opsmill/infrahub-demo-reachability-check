@@ -1,10 +1,13 @@
 [project]
 name = "infrahub-check-via-graph-traversal-demo"
 version = "0.1.0"
-description = "Demo runner for the reachability-check pattern against Infrahub 1.10 + SDK 1.22."
+description = "Demo runner for the reachability-check pattern against Infrahub 1.10 + SDK 1.22.1."
 requires-python = ">=3.10"
 dependencies = [
-  "infrahub-sdk[ctl]==1.22.0",
+  # 1.22.1 exposes ``shortest_paths_only`` on ``client.traverse_paths`` /
+  # ``PathTraversalInput`` (1.22.0 accepted it only on ``reachable_nodes``).
+  # The reachability check relies on that flag, so pin the floor there.
+  "infrahub-sdk[ctl]==1.22.1",
   "invoke>=2.2",
 ]
 

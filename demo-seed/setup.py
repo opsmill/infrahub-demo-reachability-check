@@ -1,7 +1,9 @@
 """Bootstrap the reachability-check demo against a running Infrahub 1.10.
 
-Run after ``docker compose up -d`` is healthy. Requires SDK 1.22 or
-later. ``INFRAHUB_ADDRESS`` and ``INFRAHUB_API_TOKEN`` must be exported.
+Run after ``docker compose up -d`` is healthy. Requires SDK 1.22.1 or
+later (the version the reachability check pins for
+``traverse_paths(shortest_paths_only=...)``).
+``INFRAHUB_ADDRESS`` and ``INFRAHUB_API_TOKEN`` must be exported.
 
 The script is split into two phases so the CoreRepository registration
 can run between them:

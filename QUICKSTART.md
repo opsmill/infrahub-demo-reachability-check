@@ -3,7 +3,7 @@
 Run the reachability-check pattern end-to-end against a clean
 Infrahub 1.10.1 stack on your laptop. This branch (`live-demo`) ships
 a `docker-compose.yml` pinned to Infrahub 1.10.1, a minimal topology
-seed, the SDK 1.22 check, and an `invoke` task that puts it all
+seed, the SDK 1.22.1 check, and an `invoke` task that puts it all
 together. Infrahub 1.10.1 is required: the check evaluates reachability
 over *all* loopless paths (`shortest_paths_only: false`), which the
 `PathTraversalInput` API first exposed in 1.10.1.

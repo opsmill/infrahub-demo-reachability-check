@@ -15,3 +15,4 @@ docker-compose.override.yml
 # inside the docker-compose stack. Created by `uv run invoke demo.start`
 # (or `demo.prepare-repo-source`); should never be committed.
 .demo-bare/
+.claude/settings.local.json

@@ -87,7 +87,10 @@ deadline-bounded SDK calls:
    (`include=["constraints"]`, `prefetch_relationships=True`).
 2. **`client.traverse_paths`** runs `InfrahubPathTraversal` from
    `rule.source.id` to `rule.destination.id` with the rule's
-   `max_depth` / `max_paths` and `EXCLUDED_KINDS`.
+   `max_depth` / `max_paths`, `EXCLUDED_KINDS`, and
+   `shortest_paths_only=False` (all loopless paths, not just the
+   shortest-through-each-intermediate subset). The `shortest_paths_only`
+   argument on `traverse_paths` requires infrahub-sdk 1.22.1+.
 3. **`client.execute_graphql`** issues one batched query with one
    aliased block per distinct hop kind referenced by the rule's
    constraints, then hydrates each hop edge through
@@ -162,7 +165,7 @@ sequenceDiagram
     participant PC as Proposed Change<br/>pipeline
     participant Fan as targets: fan-out<br/>(per CoreCheckDefinition)
     participant Check as PathAssertionCheck<br/>(this example)
-    participant GQL as InfrahubPathTraversal<br/>(client.traverse_paths, SDK 1.22)
+    participant GQL as InfrahubPathTraversal<br/>(client.traverse_paths, SDK 1.22.1)
     participant Verdict as CoreUserValidator<br/>+ CoreStandardCheck
     participant UI as Verdict UI card
 
@@ -173,7 +176,7 @@ sequenceDiagram
         Fan->>Fan: member.extract({rule_id})
         Fan->>Check: run_user_check(rule_id)
         Check->>Check: client.get(TopologyReachabilityRule, rule_id,<br/>include=["constraints"])
-        Check->>GQL: client.traverse_paths(source, destination,<br/>max_depth, max_paths, excluded_kinds)
+        Check->>GQL: client.traverse_paths(source, destination,<br/>max_depth, max_paths, excluded_kinds,<br/>shortest_paths_only=False)
         GQL-->>Check: PathTraversalResult: paths[], source, destination
         Check->>Check: evaluate every path against<br/>required / forbidden
         Check->>Verdict: log_entries (per-path verdict),<br/>conclusion, severity
@@ -304,17 +307,19 @@ When in doubt, open `/path-traversal` between two endpoints directly,
 look at what shows up in the depth-1 and depth-2 results, and exclude
 any kind that does not represent a real hop in your domain.
 
-Three places stay in lock-step. Update all three together when you
-extend the list (or when you rename the rule or constraint kinds in
-your fork):
+Two places stay in lock-step. Update both together when you extend
+the list (or when you rename the rule or constraint kinds in your
+fork):
 
-1. `excluded_kinds` array in `queries/path_check.gql` (the stored
-   query, kept for the `CoreCheckDefinition` `query` attribute even
-   though the check itself uses `traverse_paths`).
-2. `EXCLUDED_KINDS` tuple in `transforms/path_traversal_url.py`
+1. `EXCLUDED_KINDS` tuple in `transforms/path_traversal_url.py`
    (what the verdict URL points at).
-3. `EXCLUDED_KINDS` tuple in `checks/path_assertion.py` (what the
+2. `EXCLUDED_KINDS` tuple in `checks/path_assertion.py` (what the
    check actually passes to `client.traverse_paths()`).
+
+The stored `queries/path_check.gql` no longer carries the list: it is
+a placeholder kept only for the `CoreCheckDefinition` `query`
+attribute, since the check drives the traversal through
+`client.traverse_paths()` and never executes the stored query.
 
 ## RBAC: separation of duties and lock-down
 
